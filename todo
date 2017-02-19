@@ -1,6 +1,3 @@
-Documentation
-  * tensorflow_tree.py
-
 Feel free to acomplish the subtasks (and let me know :-) ).
 
 Tuning network struture:
@@ -29,5 +26,5 @@ Side tasks:
 
 No unknown words in character embedding (improve current process)
 Classic dropout (inside network, tf.nn.dropout)
-Ability to data not divided into Train and Test part
+Ability to handle data not divided into Train and Test part
 Dependency selection (the 'D' lines) -- big output (negative sampling / hierarchical softmax)
