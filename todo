@@ -1,0 +1,33 @@
+Documentation
+  * tensorflow_tree.py
+
+Feel free to acomplish the subtasks (and let me know :-) ).
+
+Tuning network struture:
+
+(1) Rewrite using Tensorflow Fold:
+    https://github.com/tensorflow/fold/blob/master/tensorflow_fold/g3doc/sentiment.ipynb
+(2) up_flow_with_input
+(3) down_flow:
+    Every path from top to the bottom is processed by a RNN determined by the operation on the node
+      and on the direction by which we continue (left_rnn, right_rnn)
+(4) try more layers (up_flow + down_flow + up_flow_with_input)
+(5) guessing rest of formulas, inspired by word2vec (for better word embeddings)
+  (i) do up_flow
+ (ii) do down_flow such that left_rnn gets only the right subformula (not the current) and vice versa
+(iii) at every node guess whether it is a constant, application or abstraction
+ (iv) at every leaf guess the constant
+(6) modified version (6) with ability of generation
+  (i) do up_flow
+ (ii) left_rnn is identity, right_rnn gets only the left subformula (not the current)
+(iii) for every vertex guess whether it is a left descendant of other node and if so, guess its operation
+ (iv) at every leaf guess the constant
+(7) implement actual generation based on guesses by (7)
+(8) some kind of attention ...
+
+Side tasks:
+
+No unknown words in character embedding (improve current process)
+Classic dropout (inside network, tf.nn.dropout)
+Ability to data not divided into Train and Test part
+Dependency selection (the 'D' lines) -- big output (negative sampling / hierarchical softmax)
