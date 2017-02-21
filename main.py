@@ -212,12 +212,12 @@ for epoch in range(1, args.epochs+1):
             sys.stdout.write('\r')
 
     if not args.quiet:
-        sys.stdout.write("\nDevelopment accuracy: {}, avg. loss: {}".format(sum_accuracy/processed_test_test_samples, sum_loss/processed_test_test_samples))
+        sys.stdout.write("\nDevelopment accuracy: {}, avg. loss: {}".format(sum_accuracy/processed_test_samples, sum_loss/processed_test_samples))
 
     # Log testing summary
     dev_summary = tf.Summary(value=[
-        tf.Summary.Value(tag="dev/accuracy", simple_value=sum_accuracy/processed_test_test_samples),
-        tf.Summary.Value(tag="dev/loss", simple_value=sum_loss/processed_test_test_samples),
+        tf.Summary.Value(tag="dev/accuracy", simple_value=sum_accuracy/processed_test_samples),
+        tf.Summary.Value(tag="dev/loss", simple_value=sum_loss/processed_test_samples),
     ])
     network.summary_writer.add_summary(dev_summary, network.training_step)
 
