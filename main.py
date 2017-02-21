@@ -59,7 +59,7 @@ cmd_parser.add_argument("--data_path", default='./e-hol-ml-dataset/', type=str, 
 cmd_parser.add_argument("--vocabulary_file", default='training_vocabulary.txt', type=str, help="Vocabulary file name.")
 cmd_parser.add_argument("--no-vocabulary_file", dest='vocabulary_file', action='store_const', const=None)
 cmd_parser.add_argument("--log_dir", default='./logs/', type=str, help="Directory for tensorboard logs.")
-cmd_parser.add_argument("--no-log_dir", default='./logs/', dest='logdir', action='store_const', const=None)
+cmd_parser.add_argument("--no-log_dir", dest='log_dir', action='store_const', const=None)
 cmd_parser.add_argument('--conjectures', dest='conjectures', action='store_true', help="Use conjectures (conditioned classification).")
 cmd_parser.add_argument('--no-conjectures', dest='conjectures', action='store_false')
 cmd_parser.set_defaults(conjectures=True)
@@ -212,14 +212,15 @@ for epoch in range(1, args.epochs+1):
             sys.stdout.write('\r')
 
     if not args.quiet:
-        sys.stdout.write("\nDevelopment accuracy: {}, avg. loss: {}".format(sum_accuracy/processed_test_samples, sum_loss/processed_test_samples))
+        sys.stdout.write("\nDevelopment accuracy: {}, avg. loss: {}\n".format(sum_accuracy/processed_test_samples, sum_loss/processed_test_samples))
 
     # Log testing summary
-    dev_summary = tf.Summary(value=[
-        tf.Summary.Value(tag="dev/accuracy", simple_value=sum_accuracy/processed_test_samples),
-        tf.Summary.Value(tag="dev/loss", simple_value=sum_loss/processed_test_samples),
-    ])
-    network.summary_writer.add_summary(dev_summary, network.training_step)
+    if network.summary_writer:
+        dev_summary = tf.Summary(value=[
+            tf.Summary.Value(tag="dev/accuracy", simple_value=sum_accuracy/processed_test_samples),
+            tf.Summary.Value(tag="dev/loss", simple_value=sum_loss/processed_test_samples),
+        ])
+        network.summary_writer.add_summary(dev_summary, network.training_step)
 
 if args.measure_time:
     def print_time(sec):
