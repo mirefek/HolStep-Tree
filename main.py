@@ -92,7 +92,7 @@ if args.measure_memory:
     process = psutil.Process(os.getpid())
     print("Initial memory: {}M".format(process.memory_info().rss / 10**6))
 
-encoder = tree.TokenEncoder(('*', '/'), char_emb=True)
+encoder = tree.TokenEncoder(('*', '/'), char_emb=args.char_emb)
 data_parser = DataParser(args.data_path, encoder = encoder,
                          voc_filename=args.vocabulary_file,
                          discard_unknown = args.known_only, ignore_deps = True, verbose = not args.quiet)
