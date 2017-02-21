@@ -63,19 +63,33 @@ class DataParser(object):
 
     # discard_unknown = save only conjectures / steps without unknown words
     # ignore_deps = do not save lists of dependencies -- 'deps' of a conjecture
-    def __init__(self, source_dir, encoder, verbose=1, voc_filename=None, discard_unknown = False, ignore_deps = False):
+    def __init__(self, source_dir, encoder, verbose=1, voc_filename=None, discard_unknown = False, ignore_deps = False, simple_format = False, check_input = False, divide_test = None, truncate_train = 1, truncate_test = 1):
         random.seed(1337)
 
+        self.simple_format = simple_format
         self.verbose = verbose
-        train_dir = os.path.join(source_dir, 'train')
-        val_dir = os.path.join(source_dir, 'test')
-        train_fnames = sorted([
-            os.path.join(train_dir, fname)
-            for fname in os.listdir(train_dir) if fname.isdigit()])
+        self.check_input = check_input
 
-        val_fnames = sorted([
-            os.path.join(val_dir, fname)
-            for fname in os.listdir(val_dir) if fname.isdigit()])
+        if divide_test is None:
+            train_dir = os.path.join(source_dir, 'train')
+            val_dir = os.path.join(source_dir, 'test')
+            train_fnames = sorted([
+                os.path.join(train_dir, fname)
+                for fname in os.listdir(train_dir)])
+
+            val_fnames = sorted([
+                os.path.join(val_dir, fname)
+                for fname in os.listdir(val_dir)])
+        else:
+            train_fnames = [
+                os.path.join(source_dir, fname)
+                for fname in os.listdir(source_dir)]
+            random.shuffle(train_fnames)
+            val_fnames = sorted(train_fnames[-int(divide_test*len(train_fnames)):])
+            train_fnames = sorted(train_fnames[:-len(val_fnames)])
+
+        train_fnames = train_fnames[:int(truncate_test*len(train_fnames))]
+        val_fnames = val_fnames[:int(truncate_test*len(val_fnames))]
 
         if voc_filename and os.path.isfile(voc_filename):
             self.vocabulary_index = self.load_vocabulary(voc_filename)
@@ -91,9 +105,9 @@ class DataParser(object):
         self.reverse_vocabulary_index = dict(
             [(self.vocabulary_index[key], key) for key in range(len(self.vocabulary_index))])
 
-        if encoder is None: return
+        #if encoder is None: return
 
-        encoder.set_vocab(self.reverse_vocabulary_index, self.vocabulary_index)
+        if encoder: encoder.set_vocab(self.reverse_vocabulary_index, self.vocabulary_index)
         self.encoder = encoder
 
         self.discard_unknown = discard_unknown
@@ -101,6 +115,9 @@ class DataParser(object):
 
         self.train_conjectures = self.parse_file_list(train_fnames)
         self.val_conjectures = self.parse_file_list(val_fnames)
+        print("Loaded {} training conjectures, {} validation conjectures.".format(
+            len(self.train_conjectures), len(self.val_conjectures)
+        ))
 
     def save_vocabulary(self, filename):
         f = open(filename, 'w')
@@ -118,7 +135,7 @@ class DataParser(object):
         for fname in fnames:
             f = open(fname)
             for line in f:
-                if line[0] == 'P':
+                if self.simple_format or line[0] == 'P':
                     for token in line.rstrip()[2:].split():
                         if token not in vocabulary_freq:
                             vocabulary_freq[token] = 1
@@ -149,59 +166,31 @@ class DataParser(object):
 
         return conjectures
 
-    def display_stats(self, conjectures): # vestige of holstep_baselines, not maintained, not working
-        dep_counts = []
-        dep_lengths = []
-        conj_lengths = []
-        pos_step_counts = []
-        pos_step_lengths = []
-        neg_step_counts = []
-        neg_step_lengths = []
-
-        logging.info('%s conjectures in total.', len(conjectures))
-        for key, value in conjectures.items():
-            deps = value['deps']
-            conj = value['conj']
-            pos_steps = value['+']
-            neg_steps = value['-']
-            dep_counts.append(len(deps))
-            if deps:
-                dep_lengths.append(np.mean([len(x) for x in deps]))
-            conj_lengths.append(len(conj))
-            pos_step_counts.append(len(pos_steps))
-            if pos_steps:
-                pos_step_lengths.append(np.mean([len(x) for x in pos_steps]))
-            neg_step_counts.append(len(neg_steps))
-            if neg_steps:
-                neg_step_lengths.append(np.mean([len(x) for x in neg_steps]))
-        logging.info('total number of steps: %s',
-                     np.sum(pos_step_counts) + np.sum(neg_step_counts))
-        logging.info('mean number of positive steps per conjecture: %s',
-                     np.mean(pos_step_counts))
-        logging.info('mean number of negative steps per conjecture: %s',
-                     np.mean(neg_step_counts))
-        logging.info('mean conjecture length: %s', np.mean(conj_lengths))
-        logging.info('mean number of dependencies: %s', np.mean(dep_counts))
-        logging.info('mean dependency length: %s', np.mean(dep_lengths))
-        logging.info('mean number of positive steps: %s',
-                     np.mean(pos_step_counts))
-        logging.info('mean number of negative steps: %s',
-                     np.mean(neg_step_counts))
-        logging.info('mean positive step length: %s', np.mean(pos_step_lengths))
-        logging.info('mean negative step length: %s', np.mean(neg_step_lengths))
-        # TODO: plot histograms
-
     def parse_file(self, fname): # parse a single file with a single conjecture
-        f = open(fname)
-        name = f.readline().rstrip()[2:]
 
         def tokenize(line):
             line = line.rstrip()[2:]
             tokens = [self.reverse_vocabulary_index.get(tokstr, -1) for tokstr in line.split()]
+            if self.check_input:
+                try:
+                    self.encoder.load_preselection([tokens])
+                    self.encoder.encode([tokens])
+                except IOError:
+                    print("Line: {}".format(line))
+                    print("File: {}".format(fname))
+                    raise
+
             return tokens
 
-        f.readline() # text line
-        prefix_line = f.readline()
+        f = open(fname)
+        line = f.readline()
+        name = line.rstrip()[2:]
+
+        if self.simple_format: prefix_line = line
+        else:
+            f.readline() # text line
+            prefix_line = f.readline()
+
         conj = tokenize(prefix_line)
         if self.discard_unknown and min(conj) < 0: return None
 
@@ -219,15 +208,19 @@ class DataParser(object):
                 break
             marker = line[0]
             if marker == 'D':
-                text_line = f.readline() # text line
-                token_line = f.readline() # prefix line
+                if self.simple_format: prefix_line = line
+                else:
+                    text_line = f.readline()
+                    prefix_line = f.readline()
+
                 if not self.ignore_deps:
-                    content = tokenize(token_line)
+                    content = tokenize(prefix_line)
                     if not (self.discard_unknown and min(content) < 0):
                         conjecture['deps'].append(content)
             elif marker in {'+', '-'}:
-                token_line = f.readline()
-                content = tokenize(token_line)
+                if self.simple_format: prefix_line = line
+                else: prefix_line = f.readline()
+                content = tokenize(prefix_line)
 
                 if not (self.discard_unknown and min(content) < 0):
                     conjecture[marker].append(content)
@@ -358,4 +351,4 @@ class DataParser(object):
 
 if __name__ == "__main__":
     # when loaded alone, just test that data can be loaded
-    parser = DataParser("e-hol-ml-dataset", None, voc_filename='training_vocabulary')
+    parser = DataParser("mizar-dataset", None, simple_format = True, divide_test = 0.1)

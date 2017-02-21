@@ -4,6 +4,7 @@ Tuning network struture:
 
 (1) Rewrite using Tensorflow Fold:
     https://github.com/tensorflow/fold/blob/master/tensorflow_fold/g3doc/sentiment.ipynb
+      Or not? Is it possible to store data on the tree in Fold?
 (2) up_flow_with_input
 (3) down_flow:
     Every path from top to the bottom is processed by a RNN determined by the operation on the node
@@ -26,5 +27,4 @@ Side tasks:
 
 No unknown words in character embedding (improve current process)
 Classic dropout (inside network, tf.nn.dropout)
-Ability to handle data not divided into Train and Test part
 Dependency selection (the 'D' lines) -- big output (negative sampling / hierarchical softmax)

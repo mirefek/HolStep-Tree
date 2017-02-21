@@ -66,9 +66,17 @@ cmd_parser.set_defaults(measure_memory=False)
 cmd_parser.add_argument('--measure_time', dest='measure_time', action='store_true',
                         help = "Measure separately the time of (testing / training) (data preparation / execution) and print it to stdout.")
 cmd_parser.set_defaults(measure_time=False)
+cmd_parser.add_argument("--vocabulary_file", default=None, type=str, help="Vocabulary file name.")
 cmd_parser.add_argument("--data_path", default='./e-hol-ml-dataset/', type=str, help="Path to dataset.")
-cmd_parser.add_argument("--vocabulary_file", default='training_vocabulary.txt', type=str, help="Vocabulary file name.")
-cmd_parser.add_argument("--no-vocabulary_file", dest='vocabulary_file', action='store_const', const=None)
+cmd_parser.add_argument('--simple_data', dest='simple_data', action='store_true',
+                        help = "Simple data format without names and text lines.")
+cmd_parser.set_defaults(simple_data=False)
+cmd_parser.add_argument("--divide_test_data", default=None, type=float,
+                        help="If data in data_path are not divided into test and train parts, take a given fraction of it as test data.")
+cmd_parser.add_argument("--truncate_train_data", default=1, type=float,
+                        help="Load only this fraction of training data.")
+cmd_parser.add_argument("--truncate_test_data", default=1, type=float,
+                        help="Load only this fraction of validation data.")
 cmd_parser.add_argument("--log_dir", default='./logs/', type=str, help="Directory for tensorboard logs.")
 cmd_parser.add_argument("--no-log_dir", dest='log_dir', action='store_const', const=None)
 cmd_parser.add_argument('--conjectures', dest='conjectures', action='store_true', help="Use conjectures (conditioned classification).")
@@ -97,16 +105,16 @@ cmd_parser.add_argument('--log_embeddings', dest='log_embeddings', action='store
 cmd_parser.set_defaults(log_embeddings=False)
 args = cmd_parser.parse_args()
 
-if args.vocabulary_file: args.vocabulary_file = args.data_path + args.vocabulary_file
-
 if args.measure_memory:
     process = psutil.Process(os.getpid())
     print("Initial memory: {}M".format(process.memory_info().rss / 10**6))
 
 encoder = tree.TokenEncoder(('*', '/'), char_emb=args.char_emb)
-data_parser = DataParser(args.data_path, encoder = encoder,
-                         voc_filename=args.vocabulary_file,
-                         discard_unknown = args.known_only, ignore_deps = True, verbose = not args.quiet)
+data_parser = DataParser(args.data_path, encoder = encoder, voc_filename = args.vocabulary_file,
+                         discard_unknown = args.known_only, ignore_deps = True, verbose = not args.quiet,
+                         simple_format = args.simple_data,
+                         divide_test = args.divide_test_data, truncate_test = args.truncate_test_data, truncate_train = args.truncate_train_data,
+)
 
 if args.measure_memory:
     print("Memory after parsing: {}M".format(process.memory_info().rss / 10**6))

@@ -14,7 +14,7 @@ import datetime
 from tensorflow.contrib.tensorboard.plugins import projector
 import tree_utils as tree
 
-version = '1.4'
+version = '1.5'
 
 # Tensor version of tree data described in tree_utils.py
 class TreePlaceholder:
@@ -214,6 +214,11 @@ class Network:
                     preselected = tf.concat(word_emb, 1)  # [words, emb]
 
             interface = InterfaceTF(dim)
+            applications_run = tf.make_template('applications', DoubleRNN(dim, appl_hidden_size))
+            abstractions_run = tf.make_template('abstractions', BasicGRU(dim))
+            const_collector = lambda indices,_: tf.gather(preselected, indices)
+            functions = (const_collector, applications_run, abstractions_run)
+
             if use_conjectures:
                 with tf.name_scope("conjectures"):
                     self.conjectures = TreePlaceholder()
@@ -222,20 +227,17 @@ class Network:
                     abstractions_run_c = tf.make_template('abstractions', BasicGRU(dim))
                     functions_c = (const_collector_c, applications_run_c, abstractions_run_c)
 
-                    conjectures_out,_ = tree.up_flow(self.conjectures.data, functions_c, interface)
+                    #conjectures_out,_ = tree.up_flow(self.conjectures.data, functions_c, interface)
+                    conjectures_out,_ = tree.up_flow(self.conjectures.data, functions, interface)
 
                 const_conj_mixer = tf.make_template('const_conj_mixer', DoubleRNN(dim, appl_hidden_size))
                 def const_collector(indices, ori_samples):
                     constants = tf.gather(preselected, indices)
                     conjectures = tf.gather(conjectures_out, ori_samples)
-                    #return constants
+                    return constants
                     # I tried to add conjecture to the leafs of the step. But it did not help.
-                    return const_conj_mixer(tf.stack([constants, conjectures], 1))
+                    #return const_conj_mixer(tf.stack([constants, conjectures], 1))
 
-            else: const_collector = lambda indices,_: tf.gather(preselected, indices)
-
-            applications_run = tf.make_template('applications', DoubleRNN(dim, appl_hidden_size))
-            abstractions_run = tf.make_template('abstractions', BasicGRU(dim))
             functions = (const_collector, applications_run, abstractions_run)
 
             self.steps = TreePlaceholder()

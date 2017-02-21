@@ -112,7 +112,8 @@ class TokenEncoder:
         for self.sample_index, self.input_data in enumerate(transformed_lines):
             self.index = 0
             last_actions.append(self._token_list_to_raw_instr(0))
-            if self.index != len(self.input_data): raise IOError("Line underused")
+            if self.index != len(self.input_data):
+                raise IOError("Line underused")
 
         # align depth
         maxdepth = max(len(op_tree) for op_tree in self.output)
