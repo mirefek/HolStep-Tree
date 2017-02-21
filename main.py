@@ -167,7 +167,7 @@ for epoch in range(1, args.epochs+1):
     index = (0,0)
     sum_accuracy = sum_loss = 0
     processed_test_samples = 0
-    if not quiet: counter = 1
+    if not args.quiet: counter = 1
     while True:
         if args.measure_time: start_time = time.time()
 
