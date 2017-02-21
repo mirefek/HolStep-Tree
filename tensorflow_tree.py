@@ -20,11 +20,11 @@ version = '1.4'
 class TreePlaceholder:
     def __init__(self):
         with tf.name_scope("tree_input"):
-            self.lens = [tf.placeholder(tf.int32, [None, None], name = "lens{}".format(op)) # [depth, bs]
+            self.lens = [tf.placeholder(tf.int32, [None], name = "lens{}".format(op)) # [depth]
                          for op in range(tree.op_num)]
-            self.tree_body = [tf.placeholder(tf.int32, [None,None,None, arity, 2], name = "tree_body{}".format(op)) # [depth, bs, maxlen, 2,2]
+            self.tree_body = [tf.placeholder(tf.int32, [None, arity, 3], name = "tree_body{}".format(op)) # [sumlen, arity=2,3]
                               for op,arity in enumerate(tree.signature)]
-            self.last_actions = tf.placeholder(tf.int32, [None, 2], name='last_actions') # [bs, 2]
+            self.last_actions = tf.placeholder(tf.int32, [None, 3], name='last_actions') # [bs, 3]
             self.data = (self.lens, self.tree_body, self.last_actions)
 
             self.layers = tf.shape(self.lens)[0]
@@ -48,14 +48,18 @@ class InterfaceTF:
 
     def create_recorder(self, layers, arity):
         # avioding problems with stanking of empty array
-        a = tf.TensorArray(tf.float32, size=tf.maximum(layers,1), infer_shape = False) # element_shape = [None, None, arity, self.dim])
-        return tf.cond(tf.greater(layers, 0), lambda: a, lambda: a.write(0, tf.zeros([1,1,arity,self.dim])))
+        a = tf.TensorArray(tf.float32, size=layers+1, infer_shape = False, element_shape = [None, arity, self.dim])
+        a = a.write(layers, tf.zeros([0,arity,self.dim]))
+        return a
 
     def empty(self): return tf.zeros([0, self.dim])
     def scalar_shape(self): return tf.TensorShape([])
     def data_shape(self): return tf.TensorShape([None, self.dim])
     def recorder_shape(self, arity): return tf.TensorShape(None) # tf.TensorShape([None, None, None, arity, self.dim])
     def getdim(self, data, dim): return tf.shape(data)[dim]
+    def scalar(self, x):
+        x.set_shape([])
+        return x
 
     def partition(self, data, types, types_num):
         result = tf.dynamic_partition(data, types, types_num)
@@ -71,6 +75,9 @@ class InterfaceTF:
         result_shape = tf.concat([types_shape, [self.dim]], 0)
 
         return tf.reshape(result, result_shape)
+
+    ####################################################################
+    # following operations are not currently used
 
     def flatten(self, data, lens):
         maxlen = tf.shape(data)[tf.rank(lens)]
@@ -153,6 +160,13 @@ class DoubleRNN:
 
         return tf.reduce_sum(gates*before_gates, 2) # [?, dim]
 
+def partitioned_avg(data, types, typesnum):
+
+    sums = tf.unsorted_segment_sum(data, types, typesnum)
+    nums = tf.unsorted_segment_sum(tf.ones_like(data), types, typesnum)
+
+    return sums/(nums+0.00001)
+
 # The main network
 class Network:
 
@@ -214,9 +228,9 @@ class Network:
                 def const_collector(indices, ori_samples):
                     constants = tf.gather(preselected, indices)
                     conjectures = tf.gather(conjectures_out, ori_samples)
-                    return constants
+                    #return constants
                     # I tried to add conjecture to the leafs of the step. But it did not help.
-                    # return const_conj_mixer(tf.stack([constants, conjectures], 1))
+                    return const_conj_mixer(tf.stack([constants, conjectures], 1))
 
             else: const_collector = lambda indices,_: tf.gather(preselected, indices)
 
@@ -234,14 +248,9 @@ class Network:
 
             if use_pooling:
                 with tf.variable_scope("steps_pool"):
-                    steps_pool = [tf.zeros([self.steps.batch_size, dim, 1])]
-                    for steps_parts_op in steps_parts: # [layers, bs, maxlen, arity, dim]
-                        cur_pool = tf.transpose(steps_parts_op, [1, 4, 0, 2, 3]) # [bs, dim, layers, maxlen, arity]
-                        cur_pool = tf.reshape(cur_pool, [self.steps.batch_size, dim, -1]) # [bs, dim, ?]
-                        steps_pool.append(cur_pool)
-
-                    steps_pool = tf.concat(steps_pool, 2) # [bs, dim, ?]
-                    pooled = tf.reduce_max(steps_pool, 2) # [bs, dim]
+                    data = tf.concat([steps_parts_op for steps_parts_op in steps_parts], 0) # [?, 2, dim]
+                    types = tf.concat([tree_body_op[:,:,2] for tree_body_op in self.steps.tree_body], 0)
+                    pooled = partitioned_avg(data, types, self.steps.batch_size)
 
                 steps_out = tf.concat([steps_out, pooled], 1)
 

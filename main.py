@@ -26,7 +26,8 @@ def test_predict():
     else:
         ([steps, preselection], labels), index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=10)
         predictions, logits = network.predict(steps, None, preselection)
-    print(logits)
+
+    stepwise_predictions, stepwise_logits = [], []
     index = (0,0)
     for i in range(10):
         if args.conjectures:
@@ -36,8 +37,18 @@ def test_predict():
             ([step, preselection], labels), index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=1)
             prediction, logit = network.predict(step, None, preselection)
 
-        print(prediction)
-        print(logit)
+        stepwise_predictions.append(prediction[0])
+        stepwise_logits.append(logit[0])
+
+    print("In batch:")
+    print("  Logits: {}".format(logits))
+    print("  Prediction: {}".format(predictions))
+    print("Isolated:")
+    print("  Logits: {}".format(stepwise_logits))
+    print("  Prediction: {}".format(stepwise_predictions))
+    print("Difference:")
+    print("  Logits: {}".format(stepwise_logits-logits))
+    print("  Prediction: {}".format(stepwise_predictions-predictions))
 
 logging.root.setLevel(logging.INFO)
 sys.excepthook = traceback_utils.shadow('/usr/') # hide entrails of Tensorflow in error messages
