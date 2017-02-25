@@ -1,4 +1,4 @@
-from tensorflow_tree import Network, version
+from network import Network, version
 import tensorflow as tf
 from data_utils import DataParser
 import logging # vestige of holstep_baselines, used by data_parser
@@ -14,7 +14,7 @@ import time
 # so that they return only the first step from every conjecture. Otherwise conjectures could mix
 # together and it would not show since they all are the same
 
-def test_predict(tests_num):
+def test_consistency(tests_num):
     #line = data_parser.tokenize("P f0")
     #encoder.load_preselection([line])
     #steps = encoder.encode([line])
@@ -67,7 +67,7 @@ cmd_parser = argparse.ArgumentParser(prog='tree-holstep',
 cmd_parser.add_argument('--version', action='version', version='%(prog)s '+version)
 cmd_parser.add_argument('--quiet', dest='quiet', action='store_true')
 cmd_parser.set_defaults(quiet=False)
-cmd_parser.add_argument('--consistency_check', dest='consistency_check', action='store_true', help="No training, just check whether the network is consistent")
+cmd_parser.add_argument('--consistency_check', dest='consistency_check', action='store_true', help="After first epoch check whether the network is consistent and exit")
 cmd_parser.set_defaults(consistency_check=False)
 cmd_parser.add_argument('--measure_memory', dest='measure_memory', action='store_true',
                         help = "Measure the amount of memory occupied by parsed dataset and print it to stdout.")
@@ -97,6 +97,7 @@ cmd_parser.add_argument('--pooling', dest='pooling', action='store_true', help="
 cmd_parser.set_defaults(pooling=False)
 cmd_parser.add_argument('--extra_layer', dest='extra_layer', action='store_true', help="Use one more down_up layer.")
 cmd_parser.set_defaults(extra_layer=False)
+cmd_parser.add_argument('--word2vec', default=None, nargs=2, type=float, help="Word2vec-like encoding, expects two coeficient for type_loss and const_loss respectively.")
 cmd_parser.add_argument('--known_only', dest='known_only', action='store_true', help="Discard data with unknown tokens.")
 cmd_parser.add_argument('--allow_unknown', dest='known_only', action='store_false')
 cmd_parser.set_defaults(known_only=False)
@@ -140,10 +141,11 @@ if args.pooling: expname += "-pooling"
 if args.char_emb: expname += "-char_emb"
 if args.pooling: expname += "-pooling"
 if args.extra_layer: expname += "-extra_layer"
+if args.word2vec is not None: expname += "-w2vec-{}-{}".format(args.word2vec[0], args.word2vec[1])
 network = Network(logdir = args.log_dir, threads = args.threads, expname = expname)
 network.construct(vocab_size = len(data_parser.vocabulary_index), use_conjectures=args.conjectures,
                   dim=args.rnn_dim, hidden_size=args.hidden,
-                  extra_layer = args.extra_layer,
+                  extra_layer = args.extra_layer, w2vec = args.word2vec,
                   use_pooling = args.pooling, num_chars = encoder.char_num)
 if args.log_graph: network.log_graph()
 if args.log_embeddings: network.log_vocabulary(data_parser.vocabulary_index)
@@ -199,7 +201,7 @@ for epoch in range(1, args.epochs+1):
 
     if args.log_embeddings: network.log_embeddings()
     if args.consistency_check:
-        test_predict(10)
+        test_consistency(10)
         exit()
 
     index = (0,0)

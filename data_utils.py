@@ -324,8 +324,7 @@ class DataParser(object):
         return (([self.encoder.encode(steps), self.encoder.encode(conjectures), self.encoder.get_preselection()], labels),
                 (conjecture_index, step_index))
 
-    def draw_random_batch_of_steps_and_conjectures(self, split='train',
-                                                   batch_size=128):
+    def draw_random_batch_of_steps_and_conjectures(self, split='train', batch_size=128):
         if split == 'train':
             all_conjectures = self.train_conjectures
         elif split == 'val':

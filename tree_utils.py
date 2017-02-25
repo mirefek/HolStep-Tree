@@ -5,23 +5,27 @@ TODO: rewrite into TensorFlow Fold (-> hopefully simplify)
 Tokenized formula is a list of indices from a fixed vocabulary in the prefix form. Only operations are
 application and abstraction, everything other is a constant.
 
-TokenEncoder.encode(input_lines) takes list of such formulas and creates data which can be further processed by TensorFlow
+TokenEncoder.encode(input_lines) takes list of such formulas and creates data in format TreeStructure
+  which can be further processed by TensorFlow
 Every tree is divided into layers:
   last layer contains all roots, last but one contains descendants of roots and so on up to first layer
   would contain just deepest constants. But we are not considering constant nodes now, so the layer0 is
   the layer immediately above it.
-The format of encoded data is a tuple of np.arrays: (lens, trees, roots)
-  lens and trees are arrays (of two elements) indexed by operations -- 0 = application, 1 = abstraction
-  lens[op]: 1dim array, lens[op][layer] = overall number of operation in layer l
-  trees[op]: concatenated layers, original shape would be ragged [layers, batch_size, len]
-    shape [nodes, 2=arity, 3=pointer_size]
-    pointer = [type, index, sample_index]
+The data in TreeStructure are:
+  batch_size = number of samples
+  layer_num = number of layers
+  layer_lens[op] = 1dim array, layer_lens[op][l] = overall number of operation 'op' in layer 'l'
+  node_inputs[op] = concatenated layers of operation 'op', original shape would be ragged [layers, batch_size, len]
+    shape [nodes, 2=arity, 2=pointer_size]
+    pointer = [type, index]
       type = 0 (constant) or 1 (application) or 2 (abstraction)
       if type = constant, index = index into constant preselection
       else index = index into flatten result of previous layer (among all samples)
-      sample_index = index of the sample in range(batch_size)
   roots = pointers into last layer
     shape [batch_size, 3=pointer_size]
+
+  node_sample = array copying node_inputs but instead of pointers there is index into roots (which sample it is)
+  roots_sample = the same with roots, in fact just range(roots)
 
 Before encoding, the encoder have to load preselected words from all used formulas. It is done by
 TokenEncoder.load_preselection(input_data_list)
@@ -34,7 +38,7 @@ Then TokenEncoder.get_preselection returns the preselections which can be
 
 from __future__ import print_function
 import numpy as np
-import tensorflow as tf
+#import tensorflow as tf
 
 signature = (2, 2) # application, abstraction (first argument of abstraction is the bounded variable)
 op_num = len(signature)
@@ -145,22 +149,23 @@ class TokenEncoder:
         return TreeStructure(self.output, roots)
 
 """
-The other main function here is up_flow(tree, functions, interface, use_recorders = False)
-It evaluates the data returned by encoder in a way usable in tensorflow.
+The other main function here are up_flow and down_flow providing a way
+how to process the tree in TensorFlow
+  up_flow: from leafs to roots
+  down_flow: from from roots to leafs
+
+up_flow(interface, structure, functions, input_data = None, use_recorders = False)
+
 Arguments:
-  tree = 3-tuple returned by Encoder.encode(), or appropriate tuple of tensorflow tensors
+  interface = object for manipulation with np.array / tf.Tensor, see tf_tree_utils or test_tree_utils.py
+  structure = instance of TreeStructure or its Tensor version
   functions = (collect_constants, run_applications, run_abstractions)
-    collect_constants(indices, sample_indices)
-      indices = 1dim array of indices into preselection
-      sample_indices = 1dim array of the same shape, indices of the sample of the node
-      -> returns 1dim array of the same len
-    run_applications, run_abstractions(inputs)
-      inputs = array of shape [flatten_layer_size, 2]
-      -> returns 1dim array of the same len
-  interface = object for manipulation with np.array / tf.Tensor, see TestingInterface below
-    methods: create_recorder, partition, unpartition, flatten, unflatten,
-      range_as, multiply, mask0, gather, while_loop,
-      scalar_shape, data_shape, recorder_shape, empty
+    collect_constants(indices, input_data=None)    [bs], [bs, dim] -> [bs, dim]
+      indices = indices into preselection
+    run_applications, run_abstractions (input_states, input_data)   [bs, 2=arity, dim], [bs, dim] -> [bs, dim]
+
+Returns: records, out_state   [op_num][sum_layer_len,2,dim],  [num_samples]
+  if use_recorders = False: records = None
 """
 
 def up_flow(interface, structure, functions, input_data = None, use_recorders = False):
@@ -242,12 +247,16 @@ def up_flow(interface, structure, functions, input_data = None, use_recorders = 
 
     return records, out_state
 
+# [op][sum_len, arity=2, dim], (optional [samples_num]) -> [?, dim]
+
 def flatten_node_inputs(interface, nodes, roots=None):
 
     flattened = [interface.reshape(op_nodes, (-1,)+tuple(interface.shape_of(op_nodes, known=True)[2:])) for op_nodes in nodes]
     if roots is not None: flattened.append(roots)
 
     return interface.concat(flattened, 0)
+
+# generalization of down_flow and shift_down
 
 def down_flow_univ(interface, structure, operations, data_nodes, data_roots, rec_shapes):
 
@@ -307,6 +316,17 @@ def down_flow_univ(interface, structure, operations, data_nodes, data_roots, rec
 
     return [record.concat() for record in records]
 
+"""
+down_flow(interface, structure, operations, data_nodes, data_roots)
+
+Arguments:
+  interface = object for manipulation with np.array / tf.Tensor, see tf_tree_utils or test_tree_utils.py
+  structure = instance of TreeStructure or its Tensor version
+  operations = (run_applications, run_abstractions)
+    run_applications, run_abstractions (input_states, input_data)   [bs, dim] [bs, 2=arity, dim] -> [bs, 2, dim]
+
+Returns: records    [op_num][sum_layer_len,2,dim]
+"""
 def down_flow(interface, structure, operations, data_nodes, data_roots):
 
     # the recorded values are the same as the states
@@ -320,6 +340,11 @@ def down_flow(interface, structure, operations, data_nodes, data_roots):
     rec_shapes = [[arity] for arity in signature]
 
     return down_flow_univ(interface, structure, operations, data_nodes, data_roots, rec_shapes)
+
+
+# auxiliary function used for handling inputs in up_flow
+# shifts data from every node to its descendants and discards data in leafs
+# [op][sum_len, arity=2, dim], [samples_num] -> [op][sum_len, dim]
 
 def shift_down(interface, structure, data_nodes, data_roots):
 

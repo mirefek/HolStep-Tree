@@ -2,18 +2,13 @@ Feel free to acomplish the subtasks (and let me know :-) ).
 
 Tuning network struture:
 
-(1) guessing rest of formulas, inspired by word2vec, for better word embeddings, (prepared tensorflow_tree.make_blind_down_rnn)
-  (i) do up_flow
- (ii) do down_flow such that left_rnn gets only the right subformula (not the current) and vice versa
-(iii) at every node guess whether it is a constant, application or abstraction
- (iv) at every leaf guess the constant
-(2) modified version (6) with ability of generation (prepared tensorflow_tree.make_gen_able_down_rnn)
+ - modified version (6) with ability of generation (prepared tensorflow_tree.make_gen_able_down_rnn)
   (i) do up_flow
  (ii) left_rnn is identity, right_rnn gets only the left subformula (not the current)
 (iii) for every vertex guess whether it is a left descendant of other node and if so, guess its operation
  (iv) at every leaf guess the constant
-(3) implement actual generation based on guesses by (7)
-(4) some kind of attention ...
+ - implement actual generation based on guesses by (7)
+ - some kind of attention ...
 
 Side tasks:
 

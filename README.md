@@ -8,6 +8,6 @@ This code extends [baseline models for holstep](https://github.com/tensorflow/de
 
 ## Use
 
- - Download [modified dataset](http://atrey.karlin.mff.cuni.cz/~mirecek/holstep/e-hol-ml-dataset.tgz) to the directory with code, unpack and run: python main.py
+ - Download [modified HolStep dataset](http://atrey.karlin.mff.cuni.cz/~mirecek/holstep/e-hol-ml-dataset.tgz) to the directory with code, unpack and run: python main.py
  - Download [Mizar dataset modified by Josef Urban](https://github.com/JUrban/deepmath/tree/master/nnhpdata) as mizar-dataset and run: python main.py --data_path mizar-dataset --divide_test_data 0.1  --simple_data
  
