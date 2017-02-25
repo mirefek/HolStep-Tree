@@ -63,7 +63,10 @@ class DataParser(object):
 
     # discard_unknown = save only conjectures / steps without unknown words
     # ignore_deps = do not save lists of dependencies -- 'deps' of a conjecture
-    def __init__(self, source_dir, encoder, verbose=1, voc_filename=None, discard_unknown = False, ignore_deps = False, simple_format = False, check_input = False, divide_test = None, truncate_train = 1, truncate_test = 1):
+    def __init__(self, source_dir, encoder, verbose=1, voc_filename=None,
+                 discard_unknown = False, ignore_deps = False, simple_format = False,
+                 check_input = False, divide_test = None, truncate_train = 1, truncate_test = 1,
+                 complete_vocab = False):
         random.seed(1337)
 
         self.simple_format = simple_format
@@ -88,7 +91,7 @@ class DataParser(object):
             val_fnames = sorted(train_fnames[-int(divide_test*len(train_fnames)):])
             train_fnames = sorted(train_fnames[:-len(val_fnames)])
 
-        train_fnames = train_fnames[:int(truncate_test*len(train_fnames))]
+        train_fnames = train_fnames[:int(truncate_train*len(train_fnames))]
         val_fnames = val_fnames[:int(truncate_test*len(val_fnames))]
 
         if voc_filename and os.path.isfile(voc_filename):
@@ -96,7 +99,8 @@ class DataParser(object):
         else:
             if verbose:
                 logging.info('Building vocabulary...')
-            self.vocabulary_index = self.build_vocabulary(train_fnames)
+            if complete_vocab: self.vocabulary_index = self.build_vocabulary(train_fnames+val_fnames)
+            else: self.vocabulary_index = self.build_vocabulary(train_fnames)
             if voc_filename: self.save_vocabulary(voc_filename)
 
         if verbose:
@@ -166,21 +170,21 @@ class DataParser(object):
 
         return conjectures
 
+    def tokenize(self, line):
+        line = line.rstrip()[2:]
+        tokens = [self.reverse_vocabulary_index.get(tokstr, -1) for tokstr in line.split()]
+        if self.check_input:
+            try:
+                self.encoder.load_preselection([tokens])
+                self.encoder.encode([tokens])
+            except IOError:
+                print("Line: {}".format(line))
+                print("File: {}".format(fname))
+                raise
+
+        return tokens
+
     def parse_file(self, fname): # parse a single file with a single conjecture
-
-        def tokenize(line):
-            line = line.rstrip()[2:]
-            tokens = [self.reverse_vocabulary_index.get(tokstr, -1) for tokstr in line.split()]
-            if self.check_input:
-                try:
-                    self.encoder.load_preselection([tokens])
-                    self.encoder.encode([tokens])
-                except IOError:
-                    print("Line: {}".format(line))
-                    print("File: {}".format(fname))
-                    raise
-
-            return tokens
 
         f = open(fname)
         line = f.readline()
@@ -191,7 +195,7 @@ class DataParser(object):
             f.readline() # text line
             prefix_line = f.readline()
 
-        conj = tokenize(prefix_line)
+        conj = self.tokenize(prefix_line)
         if self.discard_unknown and min(conj) < 0: return None
 
         conjecture = {
@@ -214,13 +218,13 @@ class DataParser(object):
                     prefix_line = f.readline()
 
                 if not self.ignore_deps:
-                    content = tokenize(prefix_line)
+                    content = self.tokenize(prefix_line)
                     if not (self.discard_unknown and min(content) < 0):
                         conjecture['deps'].append(content)
             elif marker in {'+', '-'}:
                 if self.simple_format: prefix_line = line
                 else: prefix_line = f.readline()
-                content = tokenize(prefix_line)
+                content = self.tokenize(prefix_line)
 
                 if not (self.discard_unknown and min(content) < 0):
                     conjecture[marker].append(content)
