@@ -10,7 +10,7 @@ Every tree is divided into layers:
   last layer contains all roots, last but one contains descendants of roots and so on up to first layer
   would contain just deepest constants. But we are not considering constant nodes now, so the layer0 is
   the layer immediately above it.
-The format of encoded data is a tuple of np.arrays: (lens, trees, last_actions)
+The format of encoded data is a tuple of np.arrays: (lens, trees, roots)
   lens and trees are arrays (of two elements) indexed by operations -- 0 = application, 1 = abstraction
   lens[op]: 1dim array, lens[op][layer] = overall number of operation in layer l
   trees[op]: concatenated layers, original shape would be ragged [layers, batch_size, len]
@@ -20,7 +20,7 @@ The format of encoded data is a tuple of np.arrays: (lens, trees, last_actions)
       if type = constant, index = index into constant preselection
       else index = index into flatten result of previous layer (among all samples)
       sample_index = index of the sample in range(batch_size)
-  last_actions = pointers into last layer
+  roots = pointers into last layer
     shape [batch_size, 3=pointer_size]
 
 Before encoding, the encoder have to load preselected words from all used formulas. It is done by
@@ -33,13 +33,40 @@ Then TokenEncoder.get_preselection returns the preselections which can be
 """
 
 from __future__ import print_function
-import sys
-import os.path
 import numpy as np
 import tensorflow as tf
 
 signature = (2, 2) # application, abstraction (first argument of abstraction is the bounded variable)
 op_num = len(signature)
+
+class TreeStructure:
+
+    def __init__(self, layers, roots):
+
+        self.batch_size = len(roots)
+        self.roots = np.array(roots)
+        self.roots_sample = self.roots[:,2]
+        self.roots = np.array(self.roots[:,:2])
+
+        # align depth
+        self.layer_num = max(len(op_tree) for op_tree in layers)
+        for op_tree in layers: op_tree += [[]]*(self.layer_num-len(op_tree))
+
+        # self.output: [operations, ~layers, ~len, arity, pointer_size], '~' mean variable length
+        self.nodes_num = []
+        self.node_inputs = []
+        self.node_sample = []
+        self.layer_lens = []
+        for op_tree in layers:
+            np_op_trees = []
+            for layer in reversed(op_tree):
+                if layer: np_op_trees.append(np.array(layer))
+                else: np_op_trees.append(np.zeros([0,2,3], int))
+            np_op_trees = np.concatenate([np.empty([0,2,3],int)]+np_op_trees)
+            self.node_sample.append(np_op_trees[:,:,2])
+            self.node_inputs.append(np_op_trees[:,:,:2])
+            self.nodes_num.append(len(np_op_trees))
+            self.layer_lens.append(np.array([len(layer) for layer in reversed(op_tree)]))
 
 class TokenEncoder:
 
@@ -107,30 +134,15 @@ class TokenEncoder:
         transformed_lines = [[self.presel_dict[token] for token in input_line] for input_line in input_lines]
 
         # decode prefix form into layers
-        last_actions = []
+        roots = []
         self.output = [[] for _ in range(op_num)]
         for self.sample_index, self.input_data in enumerate(transformed_lines):
             self.index = 0
-            last_actions.append(self._token_list_to_raw_instr(0))
+            roots.append(self._token_list_to_raw_instr(0))
             if self.index != len(self.input_data):
                 raise IOError("Line underused")
 
-        # align depth
-        maxdepth = max(len(op_tree) for op_tree in self.output)
-        for op_tree in self.output: op_tree += [[]]*(maxdepth-len(op_tree))
-        
-        # self.output: [operations, ~layers, ~len, arity, pointer_size], '~' mean variable length
-        np_trees = []
-        lens = []
-        for op_tree in self.output:
-            np_op_trees = []
-            for layer in reversed(op_tree):
-                if layer: np_op_trees.append(np.array(layer))
-                else: np_op_trees.append(np.zeros([0,2,3], int))
-            np_trees.append(np.concatenate([np.empty([0,2,3],int)]+np_op_trees))
-            lens.append(np.array([len(layer) for layer in reversed(op_tree)]))
-
-        return lens, np_trees, np.array(last_actions)
+        return TreeStructure(self.output, roots)
 
 """
 The other main function here is up_flow(tree, functions, interface, use_recorders = False)
@@ -147,27 +159,36 @@ Arguments:
       -> returns 1dim array of the same len
   interface = object for manipulation with np.array / tf.Tensor, see TestingInterface below
     methods: create_recorder, partition, unpartition, flatten, unflatten,
-      range_as, multiply, mask0, gather, while_loop, getdim,
+      range_as, multiply, mask0, gather, while_loop,
       scalar_shape, data_shape, recorder_shape, empty
 """
 
-def up_flow(tree, functions, interface, use_recorders = False):
-    lens, tree_body, last_actions = tree
+def up_flow(interface, structure, functions, input_data = None, use_recorders = False):
     collect_constants = functions[0]
     operations = functions[1:]
-    layers = interface.getdim(lens[0], 0)
 
-    def collect_inputs(ops_result, pointers):
+    if input_data is not None:
+        nodes_input, roots_input = input_data
+        shifted_input = shift_down(interface, structure, *input_data)
+    else:
+        nodes_input, roots_input, shifted_input = None, None, None
+
+    def collect_inputs(ops_result, pointers, cur_input_data):
         types = pointers[...,0]
-        pointers = pointers[...,1:]
+        index_bodies = pointers[...,1]
 
-        pointers_parts, partit_restore = interface.partition(pointers, types, op_num+1)
-        const_p = pointers_parts[0]
-        ops_p = pointers_parts[1:]
-        constants_sel = collect_constants(const_p[:,0], const_p[:,1])
-        operations_sel = [interface.gather(op_result, op_p[:,0]) for op_result, op_p in zip(ops_result, ops_p)]
+        ib_parts = interface.partition(index_bodies, types, op_num+1)
+        const_ib = ib_parts[0]
+        ops_ib = ib_parts[1:]
 
-        return interface.unpartition([constants_sel]+operations_sel, partit_restore)
+        if cur_input_data is None: constants_sel = collect_constants(const_ib)
+        else:
+            cur_input_data = interface.partition(cur_input_data, types, op_num+1)[0]
+            constants_sel = collect_constants(const_ib, input_data = cur_input_data)
+
+        operations_sel = [interface.gather(op_result, op_ib) for op_result, op_ib in zip(ops_result, ops_ib)]
+
+        return interface.unpartition([constants_sel]+operations_sel, types)
 
     def loop_body(loop_index, indices, prev_results, prev_records = None):
         next_indices = []
@@ -178,31 +199,37 @@ def up_flow(tree, functions, interface, use_recorders = False):
         else:
             records = []
 
-        for index, op_lens, op_tree_body, operation, arity, record \
-                        in zip(indices, lens, tree_body, operations, signature, prev_records):
+        for index, op_lens, op_tree_body, operation, arity, record, op_index \
+            in zip(indices, structure.layer_lens, structure.node_inputs, operations, signature, prev_records, range(op_num)):
 
             next_index = index+interface.scalar(op_lens[loop_index])
             next_indices.append(next_index)
             pointers = op_tree_body[index:next_index]
 
-            inputs = collect_inputs(prev_results, pointers) # [sl, 2, dim]
-            result = operation(inputs)
+            if input_data is None:
+                input_states = collect_inputs(prev_results, pointers, None) # [sl, 2, dim]
+                result = operation(input_states)
+            else:
+                const_input = nodes_input[op_index][index:next_index]
+                op_input = shifted_input[op_index][index:next_index]
+                input_states = collect_inputs(prev_results, pointers, const_input) # [sl, 2, dim]
+                result = operation(input_states, input_data = op_input)
 
-            if record: records.append(record.write(loop_index, inputs))
+            if record: records.append(record.write(loop_index, input_states))
             results.append(result)
 
         results = loop_index+1, next_indices, results
         if records is not None: results += (records,)
         return results
 
-    def loop_cond(loop_index, *dummy): return loop_index < layers
+    def loop_cond(loop_index, *dummy): return loop_index < structure.layer_num
 
     init_values = [0, [0 for _ in range(op_num)], [interface.empty() for _ in range(op_num)]]
-    shapes = [interface.scalar_shape(), [interface.scalar_shape() for _ in range(op_num)], [interface.data_shape() for _ in range(op_num)]]
+    shapes = [interface.fixed_shape([]), [interface.fixed_shape([]) for _ in range(op_num)], [interface.data_shape([None]) for _ in range(op_num)]]
     if use_recorders:
-        init_values.append([interface.create_recorder(layers, arity) for arity in signature])
-        shapes.append([interface.recorder_shape(arity) for arity in signature])
-    
+        init_values.append([interface.create_recorder(structure.layer_num, [None, arity]) for arity in signature])
+        shapes.append([interface.recorder_shape([None, arity]) for arity in signature])
+
     loop_return = interface.while_loop(loop_cond, loop_body, init_values, shapes)
     if use_recorders:
         _,_, ops_result, records = loop_return
@@ -211,209 +238,92 @@ def up_flow(tree, functions, interface, use_recorders = False):
         _,_, ops_result = loop_return
         records = None
 
-    out_state = collect_inputs(ops_result, last_actions)
+    out_state = collect_inputs(ops_result, structure.roots, roots_input)
 
-    return out_state, records
+    return records, out_state
 
-class TestingRecorder: # testing version of TensorArray
-    def __init__(self, layers, arity):
-        self.data = [None]*layers
-        self.arity = arity
+def flatten_node_inputs(interface, nodes, roots=None):
 
-    def write(self, index, data):
-        self.data[index] = data
-        return self
+    flattened = [interface.reshape(op_nodes, (-1,)+tuple(interface.shape_of(op_nodes, known=True)[2:])) for op_nodes in nodes]
+    if roots is not None: flattened.append(roots)
 
-    def stack(self):
-        return np.array(self.data)
+    return interface.concat(flattened, 0)
 
-    def concat(self):
-        return np.concatenate(self.data+[np.empty([0,self.arity])])
+def down_flow_univ(interface, structure, operations, data_nodes, data_roots, rec_shapes):
 
-class TestingInterface:
-    def create_recorder(self, layers, arity): return TestingRecorder(layers, arity)
+    def loop_body(loop_index, indices, prev_layer, prev_pointers, prev_records):
 
-     # divide data onto types_num parts by 'types', its shape is a beginning of the shape of data
-     # -> returns (parts, restore_info)
-    def partition(self, data, types, types_num):
-        result = [[] for _ in range(types_num)]
-        if types.size > 0:
-            it = np.nditer(types, flags=['multi_index'])
-            while not it.finished:
-                result[it[0]].append(data[it.multi_index])
-                it.iternext()
-        np_result = []
-        for a in result:
-            if len(a) > 0: np_result.append(np.array(a))
-            else: np_result.append(np.zeros((0,)+data.shape[types.ndim:], int))
+        loop_index = loop_index-1
+        next_indices = [index-interface.scalar(op_lens[loop_index]) for index, op_lens in zip(indices, structure.layer_lens)] # [op_num][]
+        cur_inputs = [op_data_nodes[next_index:index]
+                      for op_data_nodes, index, next_index in zip(data_nodes, indices, next_indices)] # [op_num][?, arity, ...]
 
-        return np_result, types
+        # dividing previous layer by operation
+        prev_types = prev_pointers[:,0]
+        prev_index_body = prev_pointers[:,1]
+        prev_parts = interface.partition(prev_layer, prev_types, op_num+1)
+        prev_index_body = interface.partition(prev_index_body, prev_types, op_num+1)
+        # discarding constants
+        prev_parts = prev_parts[1:]
+        permutations = [interface.inv_perm(perm) for perm in prev_index_body[1:]]
 
-    # reverse operation to partition using restore_info given by partition as an input
-    def unpartition(self, data, types):
-        result = np.empty_like(types, dtype=object)
-        data_index = [0]*len(data)
-        if types.size > 0:
-            it = np.nditer(types, flags=['multi_index'])
-            while not it.finished:
-                t = it[0]
-                result[it.multi_index] = data[t][data_index[t]]
-                data_index[t] += 1
-                it.iternext()
-        return result
+        # build current layer
+        next_layer, records = [], []
+        for perm, op_prev_layer, op_inputs, operation, recorder \
+            in zip(permutations, prev_parts, cur_inputs, operations, prev_records):
 
-    # like tf.gather
-    def gather(self, data, indices):
-        if indices.size == 0: return self.empty()
-        return data[indices]
+            # collect input states
+            op_i_states = interface.gather(op_prev_layer, perm)
 
-    # like tf.while_loop
-    def while_loop(self, loop_cond, loop_body, init_values, shapes):
-        values = init_values
-        while loop_cond(*values):
-            values = list(loop_body(*values))
+            # run operation
+            for_record, op_next_layer = operation(op_i_states, op_inputs)
+            records.append(recorder.write(loop_index, for_record))
 
-        return values
+            # add to lists
+            next_layer.append(op_next_layer)
 
-    def getdim(self, data, dim): return data.shape[dim]
+        next_layer = flatten_node_inputs(interface, next_layer)
 
-    # shapes for while loop
-    def scalar_shape(self): return None
-    def data_shape(self): return None
-    def recorder_shape(self, arity): return None
+        # The same operation with pointers
+        next_pointers = [op_node[next_index:index] for index, next_index, op_node in zip(indices, next_indices, structure.node_inputs)]  # [op_num][?, arity]
+        next_pointers = flatten_node_inputs(interface, next_pointers)
 
-    # empty array for while_loop initialization
-    def empty(self): return np.empty([0], dtype=object)
+        return loop_index, next_indices, next_layer, next_pointers, records
 
-    # ensures that x has scalar shape
-    def scalar(self, x): return x
+    def loop_cond(loop_index, *dummy): return loop_index > 0
 
-    # just for testing interface
-    def make_operation(self, func):
-        def operation(data):
-            results = np.empty(data.shape[:-1], dtype=object)
+    init_values = [structure.layer_num, # loop_index
+                   [interface.shape_of(op_nodes)[0] for op_nodes in structure.node_inputs], # indices
+                   data_roots, # data_layer
+                   structure.roots, # pointers layer
+                   [interface.create_recorder(structure.layer_num, [None]+op_rec_shape) for arity, op_rec_shape in zip(signature, rec_shapes)]] # records
+    shapes = [interface.fixed_shape([]), # loop_index
+              [interface.fixed_shape([]) for _ in range(op_num)], # indices
+              interface.data_shape([None]), # layer
+              interface.fixed_shape([None, 2]), # pointers
+              [interface.recorder_shape([None]+op_rec_shape) for arity, op_rec_shape in zip(signature, rec_shapes)]]
 
-            if results.size:
-                it = np.nditer(results, flags=['refs_ok', 'multi_index'], op_flags=['writeonly'])
-                while not it.finished:
-                    results[it.multi_index] = func(*data[it.multi_index])
-                    it.iternext()
+    _,_,_,_,records = interface.while_loop(loop_cond, loop_body, init_values, shapes)
 
-            return results
+    return [record.concat() for record in records]
 
-        return operation
+def down_flow(interface, structure, operations, data_nodes, data_roots):
 
-    ####################################################################
-    # following operations are not currently used
-    
-    # lens [samples]
-    # data [samples, max_len, ...]
-    # -> concatenated beginnings of rows in data given by lens
-    def flatten(self, data, lens):
-        result, ori_samples = [], []
-        sample_index = 0
-        if lens.size > 0:
-            it = np.nditer(lens, flags=['multi_index'])
-            while not it.finished:
-                cur_len = it[0]
-                line = data[it.multi_index]
-                result += list(line[:cur_len])
-                ori_samples += [sample_index]*int(cur_len)
-                sample_index += 1
+    # the recorded values are the same as the states
+    def make_double(fn):
+        def double_fn(*args, **kwargs):
+            x = fn(*args, **kwargs)
+            return x,x
+        return double_fn
 
-                it.iternext()
+    operations = [make_double(operation) for operation in operations]
+    rec_shapes = [[arity] for arity in signature]
 
-        if len(result) == 0: np_result = np.empty((0,)+data.shape[lens.ndim+1:])
-        else: np_result = np.array(result)
+    return down_flow_univ(interface, structure, operations, data_nodes, data_roots, rec_shapes)
 
-        return np_result, np.array(ori_samples, int), (lens, data.shape[lens.ndim])
+def shift_down(interface, structure, data_nodes, data_roots):
 
-    # reverse operation to flatten, it uses restore_info given by flatten
-    def unflatten(self, data, restore_info):
-        lens, max_len = restore_info
-        result = np.empty(lens.shape+(max_len,)+data.shape[1:], dtype=object)
-        index = 0
-        it = np.nditer(lens, flags=['multi_index'])
-        while not it.finished:
-            cur_len = it[0]
-            line = result[it.multi_index]
-            line[:cur_len] = data[index:index+cur_len]
-            index += cur_len
-            it.iternext()
+    operations = [lambda input_states, input_data: (input_states, input_data)]*op_num
+    rec_shapes = [[]]*op_num
 
-        return result
-
-    def range_as(self, x):
-        return np.arange(len(x))
-
-    # data [size]
-    # -> data[size, num] (just coppied)
-    def multiply(self, data, num):
-        return np.tile(data.reshape([-1,1]), num).flatten()
-
-    # boolean mask by places where mask == 0
-    def mask0(self, data, mask):
-        result = []
-        data = data.flatten()
-        mask = mask.flatten()
-        for i in range(len(mask)):
-            if mask[i] == 0: result.append(data[i])
-        return np.array(result, int)
-
-def lines_to_numpy(lines, vocab):
-    split_lines = [[vocab.get(tokstr, -1) for tokstr in line[2:].split()] for line in lines]
-
-    encoder = TokenEncoder(('*', '/'))
-    encoder.set_vocab(vocab, None)
-    encoder.load_preselection(split_lines)
-
-    return encoder.encode(split_lines), encoder.preselection
-
-def test_up_flow(data, preselection, vocab):
-    interface = TestingInterface()
-    def collect_constant(index, sample_index):
-        w_index = preselection[index]
-        if w_index < 0: result = '<unk>'
-        else: result = vocab[w_index]
-        #return "{}{}".format(sample_index, result)
-        return result
-    def collect_constants(indices, sample_indices):
-        return np.array([collect_constant(i,s) for i,s in zip(indices, sample_indices)])
-
-    run_aplications = interface.make_operation(lambda x,y: '* '+x+' '+y)
-    run_abstractions = interface.make_operation(lambda x,y: '/ '+x+' '+y)
-
-    functions = collect_constants, run_aplications, run_abstractions
-
-    return up_flow(data, functions, interface, use_recorders = True)
-
-if __name__ == "__main__":
-    # when loaded alone, just test encoder and reverse up_flow on several lines
-    
-    vocabulary = set()
-    f = open('e-hol-ml-dataset/training_vocabulary.txt')
-    for line in f:
-        vocabulary.add(line.split()[0])
-    f.close()
-    vocabulary_index = dict(enumerate(vocabulary))
-    reverse_vocabulary_index = dict(
-        [(value, key) for (key, value) in vocabulary_index.items()])
-
-    lines = []
-    lines.append("P * / b0 * ! * * c= * * cGSPEC / b1 * b0 * cSETSPEC b2 b1 * b0 / b1 / b2 * * c/\ b2 * * c= b1 b3 f0\n")
-    lines.append("P * * * * * f1 f2 f3 f4 f5 f100\n")
-    lines.append("P * f1 f2\n")
-    lines.append("P * * c= * * c- * cSUC f0 * cSUC f1 * * c- f0 f1\n")
-    lines.append("P * * c= / b0 * f0 b0 f0\n")
-    lines.append("P / b0 * b1 b2\n")
-    lines.append("P cT\n")
-    print("Original lines:")
-    for line in lines: sys.stdout.write(line)
-
-    trees, preselection = lines_to_numpy(lines, reverse_vocabulary_index)
-    trees, records = test_up_flow(trees, preselection, vocabulary_index)
-    print("After:")
-    for tree in trees:
-        print('R '+tree)
-    for op_records in records:
-        print(op_records)
+    return down_flow_univ(interface, structure, operations, data_nodes, data_roots, rec_shapes)

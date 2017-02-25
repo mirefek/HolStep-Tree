@@ -14,27 +14,30 @@ import datetime
 from tensorflow.contrib.tensorboard.plugins import projector
 import tree_utils as tree
 
-version = '1.5'
+version = '1.7'
 
 # Tensor version of tree data described in tree_utils.py
 class TreePlaceholder:
     def __init__(self):
         with tf.name_scope("tree_input"):
-            self.lens = [tf.placeholder(tf.int32, [None], name = "lens{}".format(op)) # [depth]
-                         for op in range(tree.op_num)]
-            self.tree_body = [tf.placeholder(tf.int32, [None, arity, 3], name = "tree_body{}".format(op)) # [sumlen, arity=2,3]
-                              for op,arity in enumerate(tree.signature)]
-            self.last_actions = tf.placeholder(tf.int32, [None, 3], name='last_actions') # [bs, 3]
-            self.data = (self.lens, self.tree_body, self.last_actions)
+            self.layer_lens = [tf.placeholder(tf.int32, [None], name = "layer_lens{}".format(op)) # [depth]
+                               for op in range(tree.op_num)]
+            self.node_inputs = [tf.placeholder(tf.int32, [None, arity, 2], name = "node_inputs{}".format(op)) # [sumlen, arity=2,2]
+                                for op,arity in enumerate(tree.signature)]
+            self.node_sample = [tf.placeholder(tf.int32, [None, arity], name = "node_inputs{}".format(op)) # [sumlen, arity=2]
+                                for op,arity in enumerate(tree.signature)]
+            self.roots = tf.placeholder(tf.int32, [None, 2], name='roots') # [bs, 2]
 
-            self.layers = tf.shape(self.lens)[0]
-            self.batch_size = tf.shape(self.last_actions)[0]
+            self.layer_num = tf.shape(self.layer_lens[0])[0]
+            self.batch_size = tf.shape(self.roots)[0]
+            self.roots_sample = tf.range(self.batch_size)
 
-    def feed(self, lens, tree_body, last_actions):
+    def feed(self, tree_structure):
         return dict(
-            [(self.last_actions, last_actions)] +
-            zip(self.lens, lens) +
-            zip(self.tree_body, tree_body)
+            [(self.roots, tree_structure.roots)] +
+            zip(self.layer_lens, tree_structure.layer_lens) +
+            zip(self.node_inputs, tree_structure.node_inputs) +
+            zip(self.node_sample, tree_structure.node_sample)
         )
 
 # interface for tree.up_flow
@@ -45,40 +48,41 @@ class InterfaceTF:
 
         self.while_loop = tf.while_loop
         self.gather = tf.gather
+        self.partition = tf.dynamic_partition
+        self.inv_perm = tf.invert_permutation
+        self.reshape = tf.reshape
+        self.concat = tf.concat
 
-    def create_recorder(self, layers, arity):
+    def create_recorder(self, layers, shape):
         # avioding problems with stanking of empty array
-        a = tf.TensorArray(tf.float32, size=layers+1, infer_shape = False, element_shape = [None, arity, self.dim])
-        a = a.write(layers, tf.zeros([0,arity,self.dim]))
+        a = tf.TensorArray(tf.float32, size=layers+1, infer_shape = False, element_shape = shape+[self.dim])
+        a = a.write(layers, tf.zeros([0]+shape[1:]+[self.dim]))
         return a
 
+    def shape_of(self, data, known=False):
+        if known: return data.get_shape().as_list()
+        else: return tf.shape(data)
     def empty(self): return tf.zeros([0, self.dim])
-    def scalar_shape(self): return tf.TensorShape([])
-    def data_shape(self): return tf.TensorShape([None, self.dim])
-    def recorder_shape(self, arity): return tf.TensorShape(None) # tf.TensorShape([None, None, None, arity, self.dim])
-    def getdim(self, data, dim): return tf.shape(data)[dim]
+    def fixed_shape(self, sh): return tf.TensorShape(sh)
+    def data_shape(self, sh): return tf.TensorShape(sh+[self.dim])
+    def recorder_shape(self, sh): return tf.TensorShape(None) # tf.TensorShape(sh+dim)
     def scalar(self, x):
         x.set_shape([])
         return x
 
-    def partition(self, data, types, types_num):
-        result = tf.dynamic_partition(data, types, types_num)
+    def unpartition(self, data, types):
         types_flat = tf.reshape(types, [-1])
-        rev_partition = tf.dynamic_partition(tf.range(tf.size(types_flat)), types_flat, types_num)
-
-        return result, (rev_partition, tf.shape(types))
-
-    def unpartition(self, data, restore_info):
-        rev_partition, types_shape = restore_info
+        rev_partition = tf.dynamic_partition(tf.range(tf.size(types_flat)), types_flat, len(data))
 
         result = tf.dynamic_stitch(rev_partition, data)
-        result_shape = tf.concat([types_shape, [self.dim]], 0)
+        result_shape = tf.concat([tf.shape(types), [self.dim]], 0)
 
         return tf.reshape(result, result_shape)
 
     ####################################################################
     # following operations are not currently used
 
+    def getdim(self, data, dim): return tf.shape(data)[dim]
     def flatten(self, data, lens):
         maxlen = tf.shape(data)[tf.rank(lens)]
         samples_num = tf.size(lens)
@@ -121,18 +125,65 @@ class BasicGRU:
     def __init__(self, dim):
         self.dim = dim
 
-    def __call__(self, data): # [?, 2,dim]
-        data.set_shape([None, 2,self.dim])
+    def __call__(self, input_state, input_data): # [?, dim], [?, dim]
 
-        input1 = tf.reshape(data, [-1, 2*self.dim]) # [?, 2*dim]
-        add_gate = tf_layers.fully_connected(input1, num_outputs=self.dim, activation_fn=tf.nn.sigmoid) # [?, dim]
-        forget_gate = tf_layers.fully_connected(input1, num_outputs=self.dim, activation_fn=tf.nn.sigmoid) # [?, dim]
-        bounded_var = data[:,0]  # [?, dim]
-        prev_state = data[:,1]  # [?, dim]
-        input2 = tf.concat([bounded_var,forget_gate*prev_state], 1) # [?, dim*2]
-        input2 = tf_layers.fully_connected(input2, num_outputs=self.dim, activation_fn = tf.tanh) # [?, dim]
+        input_concat1 = tf.concat([input_state, input_data], 1) # [?, 2*dim]
+        add_gate = tf_layers.fully_connected(input_concat1, num_outputs=self.dim, activation_fn=tf.nn.sigmoid) # [?, dim]
+        forget_gate = tf_layers.fully_connected(input_concat1, num_outputs=self.dim, activation_fn=tf.nn.sigmoid) # [?, dim]
 
-        return add_gate*input2 + (1-add_gate)*prev_state
+        input_concat2 = tf.concat([input_data,forget_gate*input_state], 1) # [?, 2*dim]
+        next_input = tf_layers.fully_connected(input_concat2, num_outputs=self.dim, activation_fn = tf.tanh) # [?, dim]
+
+        return add_gate*next_input + (1-add_gate)*input_state
+
+class UnivDownRNN:
+    def __init__(self, left_rnn, right_rnn):
+        self.left_rnn = left_rnn
+        self.right_rnn = right_rnn
+
+    def __call__(self, input_state, input_data): # [?, dim], [?, 2, dim]
+
+        input1, input2 = tf.unstack(input_data, axis=1)
+
+        output1 = self.left_rnn(input_state, input1, input2)
+        output2 = self.right_rnn(input_state, input2, input1)
+
+        return tf.stack([output1, output2], axis=1)
+
+def make_down_rnn(rnn_cell):
+
+    left_rnn = tf.make_template('left', rnn_cell)
+    right_rnn = tf.make_template('right', rnn_cell)
+
+    return UnivDownRNN(lambda state, data, other: left_rnn(state, data),
+                       lambda state, data, other: right_rnn(state, data))
+
+def make_blind_down_rnn(rnn_cell):
+
+    left_rnn = tf.make_template('left', rnn_cell)
+    right_rnn = tf.make_template('right', rnn_cell)
+
+    return UnivDownRNN(lambda state, data, other: left_rnn(state, other),
+                       lambda state, data, other: right_rnn(state, other))
+
+def make_gen_able_down_rnn(rnn_cell):
+
+    right_rnn = tf.make_template('right', rnn_cell)
+
+    return UnivDownRNN(lambda state, data, other: state,
+                       lambda state, data, other: right_rnn(state, other))
+
+# A variant of which takes two previous states: the right one is considered as real previous state
+# and the left one is concatenated with input_data -- used for abstraction
+class BasicGRUforUpFlow:
+    def __init__(self, dim):
+        self.dim = dim
+        self.base = BasicGRU(dim)
+
+    def __call__(self, input_states, input_data = None):
+        input_data2, input_state = tf.unstack(input_states, axis=1) # [?, 2, dim] -> [?, dim]
+        if input_data is not None: input_data2 = tf.concat([input_data2, input_data], 1)
+        return self.base(input_state, input_data2)
 
 # A variant of GRU with two input states and no input, used for operations
 # See image double-gru.svg for description
@@ -141,16 +192,18 @@ class BasicGRU:
 #   softmax applied to the coordinate of length 3,
 #   interpreted as 3 tensors of size dim
 class DoubleRNN:
-    def __init__(self, dim, hidden_size):
+    def __init__(self, dim, hidden_size = None):
         self.dim = dim
-        self.hidden_size = hidden_size
+        if hidden_size is None: self.hidden_size = dim
+        else: self.hidden_size = hidden_size
 
-    def __call__(self, data): # [?, 2,dim]
-        data.set_shape([None, 2, self.dim])
+    def __call__(self, input_states, input_data = None): # [?, 2,dim]
+        input_states.set_shape([None, 2, self.dim])
 
-        input_concat = tf.reshape(data, [-1, 2*self.dim]) # [?, 2*dim]
-        input1 = data[:,0] # [?, dim]
-        input2 = data[:,1] # [?, dim]
+        input_concat = tf.reshape(input_states, [-1, 2*self.dim]) # [?, 2*dim]
+        if input_data is not None: input_concat = tf.concat([input_concat, input_data], 1)
+        input1 = input_states[:,0] # [?, dim]
+        input2 = input_states[:,1] # [?, dim]
         hidden = tf_layers.fully_connected(input_concat, num_outputs=self.hidden_size, activation_fn = tf.nn.relu) # [?, ahs]
         input_concat = tf.concat([input_concat, hidden], 1)
         gates = tf.reshape(tf_layers.linear(input_concat, num_outputs=3*self.dim), [-1, self.dim, 3]) # [?, dim, 3]
@@ -159,6 +212,63 @@ class DoubleRNN:
         before_gates = tf.stack([input1, input2, new_state], axis=2) # [?, dim, 3]
 
         return tf.reduce_sum(gates*before_gates, 2) # [?, dim]
+
+class Combiner:
+    def __init__(self, dim, hidden_size = None):
+        self.dim = dim
+        if hidden_size is None: self.hidden_size = dim
+        else: self.hidden_size = hidden_size
+
+    def __call__(self, data1, data2): # [?, dim]
+        input_concat = tf.concat([data1, data2], 1) # [?, 2*dim]
+        hidden = tf_layers.fully_connected(input_concat, num_outputs=self.hidden_size, activation_fn = tf.nn.relu)
+        return tf_layers.fully_connected(hidden, num_outputs=self.dim, activation_fn = tf.nn.tanh)
+
+class UpLayer:
+
+    def __init__(self, dim, preselected, use_recorders = False,
+                 const_input_combiner = None, application = None, abstraction = None):
+
+        self.preselected = preselected
+        self.use_recorders = use_recorders
+
+        if const_input_combiner is None: self.const_input_combiner = tf.make_template('combiner', Combiner(dim))
+        else: self.const_input_combiner = self.const_input_combiner
+        if application is None: self.application = tf.make_template('application', DoubleRNN(dim))
+        else: self.application = application
+        if abstraction is None: self.abstraction = tf.make_template('application', BasicGRUforUpFlow(dim))
+        else: self.abstraction = abstraction
+        self.interface = InterfaceTF(dim)
+
+    def collect_constants(self, indices, input_data = None):
+
+        constants = tf.gather(self.preselected, indices)
+
+        if input_data is None: return constants
+        else: return self.const_input_combiner(constants, input_data)
+
+    def __call__(self, structure, input_data = None):
+
+        return tree.up_flow(self.interface, structure, (self.collect_constants, self.application, self.abstraction),
+                            input_data = input_data, use_recorders = self.use_recorders)
+
+class DownUpLayer:
+
+    def __init__(self, dim, preselected, **up_kwargs):
+
+        self.up_layer = UpLayer(dim, preselected, **up_kwargs)
+        self.down_appl = tf.make_template('down_applications', make_down_rnn(BasicGRU(dim)))
+        self.down_abstr = tf.make_template('down_abstractions', make_down_rnn(BasicGRU(dim)))
+
+    def __call__(self, structure, data_nodes, data_roots):
+
+        data_nodes2 = tree.down_flow(self.up_layer.interface, structure, (self.down_appl, self.down_abstr), data_nodes, data_roots)
+        data_nodes2 = [dn+dn2 for dn, dn2 in zip(data_nodes, data_nodes2)]
+        data_nodes3, data_roots3 = self.up_layer(structure)
+        if data_nodes3 is not None: data_nodes3 = [dn2+dn3 for dn2, dn3 in zip(data_nodes2, data_nodes3)]
+        data_roots3 = data_roots3+data_roots
+
+        return data_nodes3, data_roots3
 
 def partitioned_avg(data, types, typesnum):
 
@@ -184,7 +294,7 @@ class Network:
         else:
             self.summary_writer = None
 
-    def construct(self, vocab_size, use_conjectures, dim, appl_hidden_size, last_hidden_size, use_pooling=False, num_chars=None):
+    def construct(self, vocab_size, dim, hidden_size, use_conjectures = False, extra_layer=False, use_pooling=False, num_chars=None):
         with self.session.graph.as_default():
 
             with tf.name_scope("embeddings"):
@@ -214,50 +324,61 @@ class Network:
                     preselected = tf.concat(word_emb, 1)  # [words, emb]
 
             interface = InterfaceTF(dim)
-            applications_run = tf.make_template('applications', DoubleRNN(dim, appl_hidden_size))
-            abstractions_run = tf.make_template('abstractions', BasicGRU(dim))
-            const_collector = lambda indices,_: tf.gather(preselected, indices)
-            functions = (const_collector, applications_run, abstractions_run)
+            up_layer = tf.make_template('layer1', UpLayer(dim, preselected, use_recorders = use_pooling or extra_layer))
+            #up_layer = UpLayer(dim, preselected, use_recorders = use_pooling or extra_layer)
+
+            self.steps = TreePlaceholder()
+            steps_nodes1, steps_roots1 = up_layer(self.steps)
 
             if use_conjectures:
                 with tf.name_scope("conjectures"):
                     self.conjectures = TreePlaceholder()
-                    const_collector_c = lambda indices,_: tf.gather(preselected, indices)
-                    applications_run_c = tf.make_template('applications', DoubleRNN(dim, appl_hidden_size))
-                    abstractions_run_c = tf.make_template('abstractions', BasicGRU(dim))
-                    functions_c = (const_collector_c, applications_run_c, abstractions_run_c)
+                    conj_nodes1, conj_roots1 = up_layer(self.conjectures)
+                    layer1_out = tf.concat([steps_roots1, conj_roots1], 1)
 
-                    #conjectures_out,_ = tree.up_flow(self.conjectures.data, functions_c, interface)
-                    conjectures_out,_ = tree.up_flow(self.conjectures.data, functions, interface)
+            else:
+                layer1_out = steps_roots1
 
-                const_conj_mixer = tf.make_template('const_conj_mixer', DoubleRNN(dim, appl_hidden_size))
-                def const_collector(indices, ori_samples):
-                    constants = tf.gather(preselected, indices)
-                    conjectures = tf.gather(conjectures_out, ori_samples)
-                    return constants
-                    # I tried to add conjecture to the leafs of the step. But it did not help.
-                    #return const_conj_mixer(tf.stack([constants, conjectures], 1))
+            if extra_layer:
+                hidden1 = tf_layers.fully_connected(layer1_out, num_outputs=hidden_size, activation_fn = tf.nn.relu)
 
-            functions = (const_collector, applications_run, abstractions_run)
+                steps2_in = tf_layers.fully_connected(hidden1, num_outputs=dim, activation_fn = tf.tanh)
+                conj2_in = tf_layers.fully_connected(hidden1, num_outputs=dim, activation_fn = tf.tanh)
 
-            self.steps = TreePlaceholder()
-            with tf.variable_scope("up_flow_steps"):
-                steps_out, steps_parts = tree.up_flow(self.steps.data, functions, interface, use_pooling)
-                # steps_out: [bs, dim]
-                # steps_parts: [op][layers, bs, maxlen, arity, dim]
+                down_up_layer = tf.make_template('layer2', DownUpLayer(dim, preselected, use_recorders = use_pooling))
+                steps_nodes2, steps_roots2 = down_up_layer(self.steps, steps_nodes1, steps2_in)
 
-            if use_conjectures: steps_out = tf.concat([steps_out, conjectures_out], 1)
+                step_nodes_last = steps_nodes1
 
+                if use_conjectures:
+                    conj_nodes2, conj_roots2 = down_up_layer(self.conjectures, conj_nodes1, conj2_in)
+                    conj_nodes_last = conj_nodes2
+                    layer2_out = tf.concat([steps_roots2, conj_roots2], 1)
+                else:
+                    layer2_out = steps_roots2
+
+                layers_out = layer2_out
+
+            else:
+                layers_out = layer1_out
+                step_nodes_last = steps_nodes1
+                if use_conjectures: conj_nodes_last = conj_nodes1
+                
             if use_pooling:
-                with tf.variable_scope("steps_pool"):
-                    data = tf.concat([steps_parts_op for steps_parts_op in steps_parts], 0) # [?, 2, dim]
-                    types = tf.concat([tree_body_op[:,:,2] for tree_body_op in self.steps.tree_body], 0)
-                    pooled = partitioned_avg(data, types, self.steps.batch_size)
+                with tf.name_scope("steps_pool"):
+                    data = tree.flatten_node_inputs(interface, step_nodes_last)
+                    samples = tree.flatten_node_inputs(interface, self.steps.node_sample)
+                    pooled = partitioned_avg(data, samples, self.steps.batch_size)
+                    if use_conjectures:
+                        data_c = tree.flatten_node_inputs(interface, conj_nodes_last) # [?, dim]
+                        samples_c = tree.flatten_node_inputs(interface, self.conjectures.node_sample) # [?, dim]
+                        pooled_c = partitioned_avg(data_c, samples_c, self.conjectures.batch_size) # [bs, dim]
+                        pooled = tf.concat([pooled, pooled_c], 1) # [bs, dim*2]
 
-                steps_out = tf.concat([steps_out, pooled], 1)
+                layers_out = tf.concat([layers_out, pooled], 1)
 
             with tf.name_scope("output"):
-                hidden = tf_layers.fully_connected(steps_out, num_outputs=last_hidden_size, activation_fn = tf.nn.relu)
+                hidden = tf_layers.fully_connected(layers_out, num_outputs=hidden_size, activation_fn = tf.nn.relu)
                 self.logits = tf_layers.linear(hidden, num_outputs = 2)
 
             self.predictions = tf.to_int32(tf.argmax(self.logits, 1))
@@ -309,8 +430,8 @@ class Network:
 
     def _prepare_data(self, steps=None, conjectures=None, preselection=None, labels=None, dropout=None):
         result = {}
-        if steps is not None: result.update(self.steps.feed(*steps))
-        if conjectures is not None: result.update(self.conjectures.feed(*conjectures))
+        if steps is not None: result.update(self.steps.feed(steps))
+        if conjectures is not None: result.update(self.conjectures.feed(conjectures))
         if preselection is not None: result.update({self.preselection: preselection})
         if labels is not None: result.update({self.labels: labels})
         if dropout is not None:
@@ -343,7 +464,7 @@ if __name__ == "__main__":
     # when loaded alone, just try to construct a network
 
     sys.excepthook = traceback_utils.shadow('/usr/')
-    
+
     network = Network()
     vocab_size = 1996
-    network.construct(vocab_size, False, 128, 128, 256)
+    network.construct(vocab_size, 128, 256, use_conjectures = True, extra_layer = True, use_pooling = True)

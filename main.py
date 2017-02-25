@@ -5,31 +5,35 @@ import logging # vestige of holstep_baselines, used by data_parser
 import tree_utils as tree
 import os
 import sys
-import psutil
 import numpy as np
 import traceback_utils
 import argparse
 import time
 
-# Currently not used function for test whether evaluation of a tree is consistent -- an isolated result should the same
-# as if it is evaluated together with other trees in one batch.
-#
 # When used, it may be useful to modify functions draw_batch_of_steps_and_conjectures_in_order,
 # so that they return only the first step from every conjecture. Otherwise conjectures could mix
 # together and it would not show since they all are the same
 
-def test_predict():
+def test_predict(tests_num):
+    #line = data_parser.tokenize("P f0")
+    #encoder.load_preselection([line])
+    #steps = encoder.encode([line])
+    #print("simple test: {}".format(line))
+    #print("encoded: {}".format(steps))
+    #print(network.predict(steps, None, encoder.get_preselection()))
+    #print("simple test DONE".format(line))
+
     index = (0,0)
     if args.conjectures:
-        ([steps, conjectures, preselection], labels), index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=10)
+        ([steps, conjectures, preselection], labels), index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=tests_num)
         predictions, logits = network.predict(steps, conjectures, preselection)
     else:
-        ([steps, preselection], labels), index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=10)
+        ([steps, preselection], labels), index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=tests_num)
         predictions, logits = network.predict(steps, None, preselection)
 
-    stepwise_predictions, stepwise_logits = [], []
+    isolated_predictions, isolated_logits = [], []
     index = (0,0)
-    for i in range(10):
+    for i in range(tests_num):
         if args.conjectures:
             ([step, conjecture, preselection], labels), index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=1)
             prediction, logit = network.predict(step, conjecture, preselection)
@@ -37,18 +41,21 @@ def test_predict():
             ([step, preselection], labels), index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=1)
             prediction, logit = network.predict(step, None, preselection)
 
-        stepwise_predictions.append(prediction[0])
-        stepwise_logits.append(logit[0])
+        isolated_predictions.append(prediction[0])
+        isolated_logits.append(logit[0])
+
+    isolated_predictions = np.array(isolated_predictions)
+    isolated_logits = np.array(isolated_logits)
 
     print("In batch:")
     print("  Logits: {}".format(logits))
     print("  Prediction: {}".format(predictions))
     print("Isolated:")
-    print("  Logits: {}".format(stepwise_logits))
-    print("  Prediction: {}".format(stepwise_predictions))
+    print("  Logits: {}".format(isolated_logits))
+    print("  Prediction: {}".format(isolated_predictions))
     print("Difference:")
-    print("  Logits: {}".format(stepwise_logits-logits))
-    print("  Prediction: {}".format(stepwise_predictions-predictions))
+    print("  Logits: {}".format(isolated_logits-logits))
+    print("  Prediction: {}".format(isolated_predictions-predictions))
 
 logging.root.setLevel(logging.INFO)
 sys.excepthook = traceback_utils.shadow('/usr/') # hide entrails of Tensorflow in error messages
@@ -60,6 +67,8 @@ cmd_parser = argparse.ArgumentParser(prog='tree-holstep',
 cmd_parser.add_argument('--version', action='version', version='%(prog)s '+version)
 cmd_parser.add_argument('--quiet', dest='quiet', action='store_true')
 cmd_parser.set_defaults(quiet=False)
+cmd_parser.add_argument('--consistency_check', dest='consistency_check', action='store_true', help="No training, just check whether the network is consistent")
+cmd_parser.set_defaults(consistency_check=False)
 cmd_parser.add_argument('--measure_memory', dest='measure_memory', action='store_true',
                         help = "Measure the amount of memory occupied by parsed dataset and print it to stdout.")
 cmd_parser.set_defaults(measure_memory=False)
@@ -86,6 +95,8 @@ cmd_parser.add_argument('--char_emb', dest='char_emb', action='store_true', help
 cmd_parser.set_defaults(char_emb=False)
 cmd_parser.add_argument('--pooling', dest='pooling', action='store_true', help="Use max pooling on steps.")
 cmd_parser.set_defaults(pooling=False)
+cmd_parser.add_argument('--extra_layer', dest='extra_layer', action='store_true', help="Use one more down_up layer.")
+cmd_parser.set_defaults(extra_layer=False)
 cmd_parser.add_argument('--known_only', dest='known_only', action='store_true', help="Discard data with unknown tokens.")
 cmd_parser.add_argument('--allow_unknown', dest='known_only', action='store_false')
 cmd_parser.set_defaults(known_only=False)
@@ -95,8 +106,8 @@ cmd_parser.add_argument("--batch_size", default=64, type=int, help="Batch size f
 cmd_parser.add_argument("--batches_per_epoch", default=2000, type=int, help="Number of batches in one epoch.")
 cmd_parser.add_argument("--test_batch_size", default=128, type=int, help="Batch size for testing.")
 cmd_parser.add_argument("--rnn_dim", default=128, type=int, help="Dimension of RNN state.")
-cmd_parser.add_argument("--appl_hidden", default=128, type=int, help="Size of hidden layer in 'applications'.")
-cmd_parser.add_argument("--final_hidden", default=256, type=int, help="Size of the final hidden layer.")
+#cmd_parser.add_argument("--appl_hidden", default=128, type=int, help="Size of hidden layer in 'applications'.")
+cmd_parser.add_argument("--hidden", default=256, type=int, help="Size of the final hidden layer.")
 cmd_parser.add_argument("--i_dropout", default=0.5, type=float, help="Input dropout coefficient.")
 cmd_parser.add_argument("--i_dropout_protect", default=0.2, type=float, help="Fraction of vocabulary protected before dropout.")
 cmd_parser.add_argument('--log_graph', dest='log_graph', action='store_true', help="Add graph to tensorflow log.")
@@ -106,6 +117,8 @@ cmd_parser.set_defaults(log_embeddings=False)
 args = cmd_parser.parse_args()
 
 if args.measure_memory:
+    import psutil
+
     process = psutil.Process(os.getpid())
     print("Initial memory: {}M".format(process.memory_info().rss / 10**6))
 
@@ -114,20 +127,23 @@ data_parser = DataParser(args.data_path, encoder = encoder, voc_filename = args.
                          discard_unknown = args.known_only, ignore_deps = True, verbose = not args.quiet,
                          simple_format = args.simple_data,
                          divide_test = args.divide_test_data, truncate_test = args.truncate_test_data, truncate_train = args.truncate_train_data,
+                         complete_vocab = args.char_emb
 )
 
 if args.measure_memory:
     print("Memory after parsing: {}M".format(process.memory_info().rss / 10**6))
 
-expname = "{}-{}-epochs-{}-dim-{}-{}-{}-dropout-{}-{}".format(['uncond', 'cond'][args.conjectures], version, args.epochs,
-                                                              args.rnn_dim, args.appl_hidden, args.final_hidden,
+expname = "{}-{}-epochs-{}-dim-{}-{}-dropout-{}-{}".format(['uncond', 'cond'][args.conjectures], version, args.epochs,
+                                                              args.rnn_dim, args.hidden,
                                                               args.i_dropout, args.i_dropout_protect)
 if args.pooling: expname += "-pooling"
 if args.char_emb: expname += "-char_emb"
 if args.pooling: expname += "-pooling"
+if args.extra_layer: expname += "-extra_layer"
 network = Network(logdir = args.log_dir, threads = args.threads, expname = expname)
 network.construct(vocab_size = len(data_parser.vocabulary_index), use_conjectures=args.conjectures,
-                  dim=args.rnn_dim, appl_hidden_size=args.appl_hidden, last_hidden_size=args.final_hidden,
+                  dim=args.rnn_dim, hidden_size=args.hidden,
+                  extra_layer = args.extra_layer,
                   use_pooling = args.pooling, num_chars = encoder.char_num)
 if args.log_graph: network.log_graph()
 if args.log_embeddings: network.log_vocabulary(data_parser.vocabulary_index)
@@ -182,6 +198,9 @@ for epoch in range(1, args.epochs+1):
     if not args.quiet: sys.stdout.write('\n')
 
     if args.log_embeddings: network.log_embeddings()
+    if args.consistency_check:
+        test_predict(10)
+        exit()
 
     index = (0,0)
     sum_accuracy = sum_loss = 0
