@@ -2,7 +2,7 @@
 
 This code extends [baseline models for holstep](https://github.com/tensorflow/deepmath/tree/master/holstep_baselines) for by tree RNN. The long-term aim is to build a neural network useful in automated theorem proving. This tree approach improves original development accuracy for step classification from 83% to 88%. We tried it to use it directly on Mizar dataset prepared by Josef Urban for dependency selection, but it was not successful.
 
-The current code provides just step classification but it can be extended for any other tasks including formula generation (decoding). See [TODO.md] for ideas of extensions.
+The current code provides just step classification but it can be extended for any other tasks including formula generation (decoding). See [TODO](TODO.md) for ideas of extensions.
 
 ## Requirements
 
