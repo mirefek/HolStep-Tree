@@ -91,7 +91,7 @@ class Generator:
 
                 subnode = (state, subtree, cur_type-1)
                 state = next_state(subnode)
-                stack.append(subnode)
+                stack.push(subnode)
                 subtree = generate_const(state)
 
             cur_type = generate_type(state, subtree)
