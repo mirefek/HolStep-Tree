@@ -1,6 +1,6 @@
 # HolStep Tree
 
-## Where to start with extension
+## Where to start with improvements
 
 - Run "python main.py --help" and play with hyperparameters to achieve better accuracy.
   - dev accuracy 89% on the HolStep dataset not reached yet
