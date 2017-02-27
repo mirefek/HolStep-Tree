@@ -17,7 +17,7 @@ from tf_tree_utils import TreePlaceholder, InterfaceTF
 from cells import *
 from layers import *
 
-version = '1.7'
+version = '1.8'
 
 # The main network
 class Network:
@@ -105,7 +105,7 @@ class Network:
                 layers_out = layer1_out
                 step_nodes_last = steps_nodes1
                 if use_conjectures: conj_nodes_last = conj_nodes1
-                
+
             if use_pooling:
                 with tf.name_scope("steps_pool"):
                     data = tree.flatten_node_inputs(interface, step_nodes_last)
@@ -131,7 +131,12 @@ class Network:
 
             if w2vec is not None:
                 guessing_layer = GuessingLayer(dim, vocab_size, self.preselection)
-                (types_loss, types_acc), (const_loss, const_acc) = guessing_layer(self.steps, steps_nodes1)
+                # Tried to use conjectures for guessing
+                #if use_conjectures: gl_roots = conj_roots1
+                #else: gl_roots = None
+                #sample_mask = tf.cast(self.labels, tf.bool)
+                gl_roots, sample_mask = None, None
+                (types_loss, types_acc), (const_loss, const_acc) = guessing_layer(self.steps, steps_nodes1, roots = gl_roots, sample_mask = sample_mask)
                 summary += [tf.summary.scalar("train/types_loss", types_loss),
                             tf.summary.scalar("train/const_loss", const_loss),
                             tf.summary.scalar("train/types_acc", types_acc),

@@ -1,21 +1,12 @@
-Feel free to acomplish the subtasks (and let me know :-) ).
+Feel free to acomplish the tasks (and let me know :-) ).
 
-Tuning network struture:
-
- - modified version (6) with ability of generation (prepared tensorflow_tree.make_gen_able_down_rnn)
-  (i) do up_flow
- (ii) left_rnn is identity, right_rnn gets only the left subformula (not the current)
-(iii) for every vertex guess whether it is a left descendant of other node and if so, guess its operation
- (iv) at every leaf guess the constant
- - implement actual generation based on guesses by (7)
+ - Ability to log constants in char_emb mode
+ - More flexibility with tree-RNN inputs (not neccesarily the same dim)
+   - Split interface and dimension
+ - Classic dropout (inside network, tf.nn.dropout)
+ - Dependency selection (the 'D' lines) -- big output (negative sampling / hierarchical softmax)
+ - Rewrite using Tensorflow Fold:
+   - https://github.com/tensorflow/fold/blob/master/tensorflow_fold/g3doc/sentiment.ipynb
+     - Or not? Is it possible to store data on the tree in Fold?
+ - batching in generation?
  - some kind of attention ...
-
-Side tasks:
-
-More flexibility with tree-RNN inputs (not neccesarily the same dim)
-  Split interface and dimension
-Classic dropout (inside network, tf.nn.dropout)
-Dependency selection (the 'D' lines) -- big output (negative sampling / hierarchical softmax)
-Rewrite using Tensorflow Fold:
-    https://github.com/tensorflow/fold/blob/master/tensorflow_fold/g3doc/sentiment.ipynb
-      Or not? Is it possible to store data on the tree in Fold?

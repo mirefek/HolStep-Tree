@@ -167,7 +167,7 @@ class TestingInterface:
 interface = TestingInterface()
 
 def lines_to_tree_structure(lines):
-    global vocabulary, preselection
+    global vocabulary, reverse_voc, preselection
 
     split_lines = [line[2:].split() for line in lines]
 
@@ -236,32 +236,34 @@ def test_down_flow(structure):
 
     return records, roots
 
-# Test on some prepared lines
-lines = []
-lines.append("P * f1 f2\n")
-lines.append("P * / b0 * ! * * c= * * cGSPEC / b1 * b0 * cSETSPEC b2 b1 * b0 / b1 / b2 * * c/\ b2 * * c= b1 b3 f0\n")
-lines.append("P * * * * * f1 f2 f3 f4 f5 f100\n")
-lines.append("P * * c= * * c- * cSUC f0 * cSUC f1 * * c- f0 f1\n")
-lines.append("P * * c= / b0 * f0 b0 f0\n")
-lines.append("P / b0 * b1 b2\n")
-lines.append("P cT\n")
-print("Original lines:")
-for line in lines: sys.stdout.write(line)
+if __name__ == "__main__":
 
-tree_data = lines_to_tree_structure(lines)
+    # Test on some prepared lines
+    lines = []
+    lines.append("P * f1 f2\n")
+    lines.append("P * / b0 * ! * * c= * * cGSPEC / b1 * b0 * cSETSPEC b2 b1 * b0 / b1 / b2 * * c/\ b2 * * c= b1 b3 f0\n")
+    lines.append("P * * * * * f1 f2 f3 f4 f5 f100\n")
+    lines.append("P * * c= * * c- * cSUC f0 * cSUC f1 * * c- f0 f1\n")
+    lines.append("P * * c= / b0 * f0 b0 f0\n")
+    lines.append("P / b0 * b1 b2\n")
+    lines.append("P cT\n")
+    print("Original lines:")
+    for line in lines: sys.stdout.write(line)
 
-print("Test up flow:")
-records, roots = test_up_flow(tree_data)
-for root in roots:
-    print('R '+root)
-#for op_records in records:
-#    print(op_records)
+    tree_data = lines_to_tree_structure(lines)
 
-print("Test down flow:")
-records, roots = test_down_flow(tree_data)
-for root in roots:
-    print(root)
-#print("Records:")
-#print("----------------")
-#for op_records in records:
-#    print(op_records)
+    print("Test up flow:")
+    records, roots = test_up_flow(tree_data)
+    for root in roots:
+        print('R '+root)
+    #for op_records in records:
+    #    print(op_records)
+
+    print("Test down flow:")
+    records, roots = test_down_flow(tree_data)
+    for root in roots:
+        print(root)
+    #print("Records:")
+    #print("----------------")
+    #for op_records in records:
+    #    print(op_records)
