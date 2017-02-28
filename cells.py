@@ -68,12 +68,12 @@ def make_blind_down_rnn(rnn_cell): # [?, dim], [?, 2, dim] -> [?, dim]
 # Down_flow cell that see so little data that it is possible to make decoder by its answers
 # currently not used
 
-def make_gen_able_down_rnn(rnn_cell): # [?, dim], [?, 2, dim] -> [?, dim]
+def make_gen_able_down_rnn(rnn_cell, name): # [?, dim], [?, 2, dim] -> [?, dim]
 
-    right_rnn = tf.make_template('right', rnn_cell)
+    right_rnn = tf.make_template(name, rnn_cell)
 
     return UnivDownRNN(lambda state, data, other: state,
-                       lambda state, data, other: right_rnn(state, other))
+                       lambda state, data, other: right_rnn(state, other)), right_rnn
 
 
 # -----------------    Down Cells   -------------------------------
