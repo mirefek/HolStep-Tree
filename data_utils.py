@@ -231,7 +231,7 @@ class DataParser(object):
 
         return conjecture
 
-    def draw_random_batch_of_steps(self, split='train', batch_size=128):
+    def draw_random_batch_of_steps(self, split='train', batch_size=128, only_pos = False):
         if split == 'train':
             all_conjectures = self.train_conjectures
         elif split == 'val':
@@ -239,7 +239,9 @@ class DataParser(object):
         else:
             raise ValueError('`split` must be in {"train", "val"}.')
 
-        labels = np.random.randint(0, 2, size=(batch_size,))
+        if only_pos: labels = np.ones((batch_size,), int)
+        else: labels = np.random.randint(0, 2, size=(batch_size,))
+
         steps = []
         i = 0
         while len(steps) < batch_size:
@@ -257,7 +259,7 @@ class DataParser(object):
         self.encoder.load_preselection(steps)
         return [self.encoder.encode(steps), self.encoder.get_preselection()], labels
 
-    def draw_batch_of_steps_in_order(self, begin_index=(0,0), split='train', batch_size=128):
+    def draw_batch_of_steps_in_order(self, begin_index=(0,0), split='train', batch_size=128, only_pos = False):
         conjecture_index, step_index = begin_index
 
         if split == 'train':
@@ -271,10 +273,14 @@ class DataParser(object):
         steps = []
         while len(steps) < batch_size and conjecture_index < len(all_conjectures):
             conjecture = all_conjectures[conjecture_index]
-            conjecture_steps = conjecture['+'] + conjecture['-']
+
+            if only_pos: conjecture_steps = conjecture['+']
+            else: conjecture_steps = conjecture['+']+conjecture['-']
+
             if len(conjecture_steps) > step_index:
-                step_labels = ([1] * len(conjecture['+']) +
-                               [0] * len(conjecture['-']))
+                if only_pos: step_labels = [1] * len(conjecture['+'])
+                else: step_labels = [1] * len(conjecture['+']) + [0] * len(conjecture['-'])
+
                 remaining = batch_size - len(steps)
                 steps += conjecture_steps[step_index: step_index + remaining]
                 labels += step_labels[step_index: step_index + remaining]
@@ -288,7 +294,7 @@ class DataParser(object):
         self.encoder.load_preselection(steps)
         return ([self.encoder.encode(steps), self.encoder.get_preselection()], labels), (conjecture_index, step_index)
 
-    def draw_batch_of_steps_and_conjectures_in_order(self, begin_index=(0,0), split='train', batch_size=128):
+    def draw_batch_of_steps_and_conjectures_in_order(self, begin_index=(0,0), split='train', batch_size=128, only_pos = False):
         conjecture_index, step_index = begin_index
 
         if split == 'train':
@@ -303,12 +309,17 @@ class DataParser(object):
         steps = []
         while len(steps) < batch_size and conjecture_index < len(all_conjectures):
             conjecture = all_conjectures[conjecture_index]
-            conjecture_steps = conjecture['+'] + conjecture['-']
-            #conjecture_steps = conjecture_steps[:1]
+
+            if only_pos: conjecture_steps = conjecture['+']
+            else: conjecture_steps = conjecture['+'] + conjecture['-']
+
+            #conjecture_steps = conjecture_steps[:1] # for stronger consistency_check
+
             if len(conjecture_steps) > step_index:
-                step_labels = ([1] * len(conjecture['+']) +
-                               [0] * len(conjecture['-']))
-                #step_labels = step_labels[:1]
+                if only_pos: step_labels = [1] * len(conjecture['+'])
+                else: step_labels = [1] * len(conjecture['+']) + [0] * len(conjecture['-'])
+
+                #step_labels = step_labels[:1] # for stronger consistency_check
                 remaining = batch_size - len(steps)
                 steps += conjecture_steps[step_index: step_index + remaining]
                 added_labels = step_labels[step_index: step_index + remaining]
@@ -318,13 +329,14 @@ class DataParser(object):
             else:
                 step_index = 0
                 conjecture_index += 1
+
         labels = np.asarray(labels).astype('float32')
 
         self.encoder.load_preselection(steps+conjectures)
         return (([self.encoder.encode(steps), self.encoder.encode(conjectures), self.encoder.get_preselection()], labels),
                 (conjecture_index, step_index))
 
-    def draw_random_batch_of_steps_and_conjectures(self, split='train', batch_size=128):
+    def draw_random_batch_of_steps_and_conjectures(self, split='train', batch_size=128, only_pos = False):
         if split == 'train':
             all_conjectures = self.train_conjectures
         elif split == 'val':
@@ -332,7 +344,9 @@ class DataParser(object):
         else:
             raise ValueError('`split` must be in {"train", "val"}.')
 
-        labels = np.random.randint(0, 2, size=(batch_size,))
+        if only_pos: labels = np.ones((batch_size,), int)
+        else: labels = np.random.randint(0, 2, size=(batch_size,))
+
         conjectures = []
         steps = []
         i = 0

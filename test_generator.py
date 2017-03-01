@@ -1,68 +1,11 @@
 import numpy as np
 import tensorflow as tf
 import test_tree_utils as ttu
-from generator import Generator
+from generator_network import Network
 from tf_tree_utils import TreePlaceholder
-import tensorflow.python.debug as tf_debug
 
 import sys
 import traceback_utils
-
-class Network:
-
-    def __init__(self, dim, len_lines):
-
-        vocab_size = len(ttu.vocabulary)
-        self.len_lines = len_lines
-
-        graph = tf.Graph()
-        graph.seed = 42
-        self.session = tf.Session(graph = graph)
-
-        with self.session.graph.as_default():
-
-            line_emb = tf.tanh(tf.get_variable(name="line_embeddings", shape=[len_lines, dim]))
-            embeddings = tf.tanh(tf.get_variable(name="raw_embeddings", shape=[vocab_size+1, dim]))
-
-            self.preselection = tf.placeholder(tf.int32, [None], name='preselection')
-            self.line_indices = tf.placeholder(tf.int32, [None], name='line_indices') # for training
-            self.line_index = tf.placeholder(tf.int32, [], name='line_index') # for generation
-
-            self.structure = TreePlaceholder()
-            op_symbols = ['*', '/']
-            op_symbols = [ttu.reverse_voc[s] for s in op_symbols]
-            generator = Generator(dim, op_symbols, embeddings, self.preselection)
-
-            init_state = line_emb[self.line_index]
-            init_states = tf.gather(line_emb, self.line_indices)
-
-            (types_loss, self.types_acc), (const_loss, self.const_acc) =\
-                generator.train(init_states, self.structure)
-            self.training = tf.train.AdamOptimizer().minimize(types_loss+const_loss)
-            self.prediction = generator(init_state)
-
-            self.session.run(tf.global_variables_initializer())
-
-        self.session.graph.finalize()
-
-    def train(self, structure, line_indices):
-
-        data = self.structure.feed(structure)
-        data.update({self.preselection: ttu.preselection, self.line_indices: line_indices})
-        types_acc, const_acc, _ = self.session.run([self.types_acc, self.const_acc, self.training], data)
-
-        return types_acc, const_acc
-
-    def predict(self):
-
-        ext_vocab = ['<unk>']+ttu.vocabulary
-        predictions = []
-        for i in range(self.len_lines):
-            prediction = self.session.run(self.prediction, {self.line_index: i})
-            prediction = ' '.join([ext_vocab[w+1] for w in prediction])
-            predictions.append(prediction)
-
-        return predictions
 
 if __name__ == "__main__":
 
@@ -76,17 +19,18 @@ if __name__ == "__main__":
     lines.append("P * * c= / b0 * f0 b0 f0\n")
     lines.append("P / b0 * b1 b2\n")
     lines.append("P cT\n")
+    #lines.append("P * * c==> * c~ * ccollinear * * cINSERT f0 * * cINSERT f1 * * cINSERT f2 cEMPTY * * c==> * c~ * * * cbarV f3 * cNUMERAL * cBIT1 * cBIT1 c_0 * * ccc_uh f3 * * cCONS f0 * * cCONS f1 * * cCONS * f4 f5 cNIL * * c==> * cpacking f3 * * c==> * csaturated f3 * * c==> * * c= * * cmcell4 f3 * * ccc_uh f3 * * cCONS f0 * * cCONS f1 * * cCONS * f4 f5 cNIL * * ccc_cell f3 * * cCONS f0 * * cCONS f1 * * cCONS * f4 f5 cNIL * * c==> * * c= f6 f5 * * c==> * * c= * * ccc_ke f3 * * cCONS f0 * * cCONS f1 * * cCONS * f4 f6 cNIL * cNUMERAL * cBIT0 * cBIT0 * cBIT1 c_0 * * c==> * * c= * * cEL * cNUMERAL c_0 * * ccc_uh f3 * * cCONS f0 * * cCONS f1 * * cCONS * f4 f6 cNIL f0 * * c==> * * c= * * cEL * cNUMERAL * cBIT0 * cBIT1 c_0 * * ccc_uh f3 * * cCONS f0 * * cCONS f1 * * cCONS * f4 f6 cNIL * f4 f6 * * c==> * * c= * * cEL * cNUMERAL * cBIT1 c_0 * * ccc_uh f3 * * cCONS f0 * * cCONS f1 * * cCONS * f4 f6 cNIL f1 * * c==> * * c< * cNUMERAL * cBIT1 c_0 f7 * * c==> * * cperiodic f4 f7 * * c==> * * cleaf f3 * * cCONS f0 * * cCONS f1 * * cCONS * f4 f6 cNIL * * c==> * * * * * cleaf_rank f3 * * cCONS f0 * * cCONS f1 cNIL f2 f7 f4 * * c==> * * * * * ccc_4 f3 f0 f1 f4 f6 * * c==> * ! / b0 * ! / b1 * * c= * * cIN b1 b0 * b0 b1 * * c==> * ! / b0 * ! / b1 * * c==> * * c/\ * cpacking b0 * * c/\ * csaturated b0 * * cleaf b0 b1 * * c/\ * * cIN * * ccc_uh b0 b1 * * cbarV b0 * cNUMERAL * cBIT1 * cBIT1 c_0 * * c/\ * * c= * * ctruncate_simplex * cNUMERAL * cBIT0 * cBIT1 c_0 * * ccc_uh b0 b1 b1 * * c= * * comega_list b0 * * ccc_uh b0 b1 * * ccc_pe1 b0 b1 cF")
 
     real_structure = ttu.lines_to_tree_structure(lines)
 
     print(ttu.vocabulary)
-    network = Network(20, len(lines))
+    network = Network(20, len(lines), ttu.vocabulary, ttu.reverse_voc, max_steps = 100)
     for i in range(401):
 
-        types_acc, const_acc = network.train(real_structure, np.arange(len(lines)))
+        types_loss_acc, const_loss_acc = network.train(real_structure, ttu.preselection, np.arange(len(lines)))
         if i%20 == 0:
-            print("{}: types {},  const {}".format(i, types_acc, const_acc))
-            predictions = network.predict()
+            print("{}: types {},  const {}".format(i, types_loss_acc, const_loss_acc))
+            predictions = network.predict(range(len(lines)))
             for ori, pred in zip(lines, predictions):
                 print("Original: {}".format(ori.rstrip()))
                 print("Prediction: {}".format(pred))
