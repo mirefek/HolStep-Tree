@@ -41,25 +41,26 @@ class Network:
             embeddings = tf.tanh(tf.get_variable(name="raw_embeddings", shape=[vocab_size+1, dim]))
 
             self.preselection = tf.placeholder(tf.int32, [None], name='preselection')
-
             if gen_by_conjecture:
-                self.conjectures = TreePlaceholder()
                 preselected = tf.gather(embeddings, self.preselection+1)
-                up_layer = tf.make_template('up_layer', UpLayer(dim, preselected))
+                up_layer = UpLayer(dim, preselected)
+
+                self.conjectures = TreePlaceholder()
                 _, encoded_conj = up_layer(self.conjectures)
-                hidden = tf_layers.fully_connected(encoded_conj, num_outputs = dim, activation_fn = tf.nn.relu)
+                hidden = tf_layers.fully_connected(encoded_conj, num_outputs = 2*dim, activation_fn = tf.nn.relu)
                 init_states = tf_layers.fully_connected(hidden, num_outputs = dim, activation_fn = tf.tanh)
 
             else:
                 self.line_indices = tf.placeholder(tf.int32, [None], name='line_indices') # for training
                 init_states = tf.gather(line_emb, self.line_indices)
+                up_layer = None
 
             init_state = tf.reshape(init_states, [dim])
 
             self.structure = TreePlaceholder()
             op_symbols = ['*', '/']
             op_symbols = [reverse_voc[s] for s in op_symbols]
-            generator = Generator(dim, op_symbols, embeddings, self.preselection)
+            generator = Generator(dim, op_symbols, embeddings, self.preselection, up_layer = up_layer)
 
             (self.types_loss, self.types_acc), (self.const_loss, self.const_acc) =\
                 generator.train(init_states, self.structure)
@@ -91,7 +92,7 @@ class Network:
         else: data.update({self.line_indices: init_states})
 
         types_loss, types_acc, const_loss, const_acc, summary, _ =\
-            self.session.run([self.types_loss, self.types_acc, self.const_loss, self.const_acc, self.training, self.summary], data)
+            self.session.run([self.types_loss, self.types_acc, self.const_loss, self.const_acc, self.summary, self.training], data)
         if self.summary_writer:
             self.summary_writer.add_summary(summary, self.training_step)
 
@@ -151,7 +152,7 @@ if __name__ == "__main__":
         acumulated = [2, 0.5, 2, 0.5]
         for i in range(2000):
 
-            [steps, conjectures, preselection], _ = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train', only_pos = True)
+            steps, conjectures, preselection = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train', only_pos = True)
 
             types_loss_acc, const_loss_acc = network.train(steps, preselection, conjectures)
             loss_acc = list(types_loss_acc+const_loss_acc)
@@ -165,7 +166,7 @@ if __name__ == "__main__":
 
         batch_size = 128
         while True:
-            ([steps, conjectures, preselection], labels), index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=128, only_pos = True)
+            [steps, conjectures, preselection], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=128, only_pos = True)
             if len(labels) == 0: break
 
             types_loss_acc, const_loss_acc = network.evaluate(steps, preselection, conjectures)

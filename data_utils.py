@@ -66,7 +66,7 @@ class DataParser(object):
     def __init__(self, source_dir, encoder, verbose=1, voc_filename=None,
                  discard_unknown = False, ignore_deps = False, simple_format = False,
                  check_input = False, divide_test = None, truncate_train = 1, truncate_test = 1,
-                 complete_vocab = False):
+                 complete_vocab = False, step_as_index = False):
         random.seed(1337)
 
         self.simple_format = simple_format
@@ -119,9 +119,20 @@ class DataParser(object):
 
         self.train_conjectures = self.parse_file_list(train_fnames)
         self.val_conjectures = self.parse_file_list(val_fnames)
-        print("Loaded {} training conjectures, {} validation conjectures.".format(
+        if verbose: print("Loaded {} training conjectures, {} validation conjectures.".format(
             len(self.train_conjectures), len(self.val_conjectures)
         ))
+
+        self.step_as_index = step_as_index
+        if step_as_index:
+            steps_set = set()
+            for conj in train_conjectures:
+                for step in conj['+']+conj['-']:
+                    steps_set.add(step)
+            steps_set = dict((step,i) for i,step in steps_set)
+            for conj in train_conjectures + val_conjectures:
+                conj['+'] = [steps_set.get(step, -1) for step in conj['+'] ]
+                conj['-'] = [steps_set.get(step, -1) for step in conj['-'] ]
 
     def save_vocabulary(self, filename):
         f = open(filename, 'w')
@@ -175,8 +186,7 @@ class DataParser(object):
         tokens = [self.reverse_vocabulary_index.get(tokstr, -1) for tokstr in line.split()]
         if self.check_input:
             try:
-                self.encoder.load_preselection([tokens])
-                self.encoder.encode([tokens])
+                self.encoder([tokens])
             except IOError:
                 print("Line: {}".format(line))
                 print("File: {}".format(fname))
@@ -231,140 +241,92 @@ class DataParser(object):
 
         return conjecture
 
-    def draw_random_batch_of_steps(self, split='train', batch_size=128, only_pos = False):
+    def draw_batch(self, split, batch_size, get_conjectures = True, only_pos = False, begin_index = None, use_preselection = True):
+
+        in_order = (begin_index is not None)
+
         if split == 'train':
             all_conjectures = self.train_conjectures
         elif split == 'val':
             all_conjectures = self.val_conjectures
         else:
             raise ValueError('`split` must be in {"train", "val"}.')
-
-        if only_pos: labels = np.ones((batch_size,), int)
-        else: labels = np.random.randint(0, 2, size=(batch_size,))
 
         steps = []
-        i = 0
-        while len(steps) < batch_size:
-            conjecture = random.choice(all_conjectures)
-            if labels[i]:
-                conjecture_steps = conjecture['+']
-            else:
-                conjecture_steps = conjecture['-']
-            if not conjecture_steps:
-                continue
-            step = random.choice(conjecture_steps)
-            steps.append(step)
-            i += 1
-
-        self.encoder.load_preselection(steps)
-        return [self.encoder.encode(steps), self.encoder.get_preselection()], labels
-
-    def draw_batch_of_steps_in_order(self, begin_index=(0,0), split='train', batch_size=128, only_pos = False):
-        conjecture_index, step_index = begin_index
-
-        if split == 'train':
-            all_conjectures = self.train_conjectures
-        elif split == 'val':
-            all_conjectures = self.val_conjectures
-        else:
-            raise ValueError('`split` must be in {"train", "val"}.')
-
-        labels = []
-        steps = []
-        while len(steps) < batch_size and conjecture_index < len(all_conjectures):
-            conjecture = all_conjectures[conjecture_index]
-
-            if only_pos: conjecture_steps = conjecture['+']
-            else: conjecture_steps = conjecture['+']+conjecture['-']
-
-            if len(conjecture_steps) > step_index:
-                if only_pos: step_labels = [1] * len(conjecture['+'])
-                else: step_labels = [1] * len(conjecture['+']) + [0] * len(conjecture['-'])
-
-                remaining = batch_size - len(steps)
-                steps += conjecture_steps[step_index: step_index + remaining]
-                labels += step_labels[step_index: step_index + remaining]
-                step_index += remaining
-            else:
-                step_index = 0
-                conjecture_index += 1
-
-        labels = np.asarray(labels).astype('float32')
-
-        self.encoder.load_preselection(steps)
-        return ([self.encoder.encode(steps), self.encoder.get_preselection()], labels), (conjecture_index, step_index)
-
-    def draw_batch_of_steps_and_conjectures_in_order(self, begin_index=(0,0), split='train', batch_size=128, only_pos = False):
-        conjecture_index, step_index = begin_index
-
-        if split == 'train':
-            all_conjectures = self.train_conjectures
-        elif split == 'val':
-            all_conjectures = self.val_conjectures
-        else:
-            raise ValueError('`split` must be in {"train", "val"}.')
-
-        labels = []
         conjectures = []
-        steps = []
-        while len(steps) < batch_size and conjecture_index < len(all_conjectures):
-            conjecture = all_conjectures[conjecture_index]
+        if in_order:
+            labels = []
+            conjecture_index, step_index = begin_index
+            while len(steps) < batch_size and conjecture_index < len(all_conjectures):
+                conjecture = all_conjectures[conjecture_index]
 
-            if only_pos: conjecture_steps = conjecture['+']
-            else: conjecture_steps = conjecture['+'] + conjecture['-']
+                if only_pos: conjecture_steps = conjecture['+']
+                else: conjecture_steps = conjecture['+']+conjecture['-']
 
-            #conjecture_steps = conjecture_steps[:1] # for stronger consistency_check
+                if len(conjecture_steps) > step_index:
+                    if only_pos: step_labels = [1] * len(conjecture['+'])
+                    else: step_labels = [1] * len(conjecture['+']) + [0] * len(conjecture['-'])
 
-            if len(conjecture_steps) > step_index:
-                if only_pos: step_labels = [1] * len(conjecture['+'])
-                else: step_labels = [1] * len(conjecture['+']) + [0] * len(conjecture['-'])
+                    remaining = batch_size - len(steps)
 
-                #step_labels = step_labels[:1] # for stronger consistency_check
-                remaining = batch_size - len(steps)
-                steps += conjecture_steps[step_index: step_index + remaining]
-                added_labels = step_labels[step_index: step_index + remaining]
-                labels += added_labels
-                conjectures += [conjecture['conj']] * len(added_labels)
-                step_index += remaining
-            else:
-                step_index = 0
-                conjecture_index += 1
+                    added_labels = step_labels[step_index: step_index + remaining]
+                    labels += added_labels
 
-        labels = np.asarray(labels).astype('float32')
+                    steps += conjecture_steps[step_index: step_index + remaining]
+                    if get_conjectures: conjectures += [conjecture['conj']] * len(added_labels)
 
-        self.encoder.load_preselection(steps+conjectures)
-        return (([self.encoder.encode(steps), self.encoder.encode(conjectures), self.encoder.get_preselection()], labels),
-                (conjecture_index, step_index))
+                    step_index += remaining
+                else:
+                    step_index = 0
+                    conjecture_index += 1
 
-    def draw_random_batch_of_steps_and_conjectures(self, split='train', batch_size=128, only_pos = False):
-        if split == 'train':
-            all_conjectures = self.train_conjectures
-        elif split == 'val':
-            all_conjectures = self.val_conjectures
+            labels = np.asarray(labels)
         else:
-            raise ValueError('`split` must be in {"train", "val"}.')
+            if only_pos: labels = np.ones((batch_size,), int)
+            else: labels = np.random.randint(0, 2, size=(batch_size,))
 
-        if only_pos: labels = np.ones((batch_size,), int)
-        else: labels = np.random.randint(0, 2, size=(batch_size,))
+            while len(steps) < batch_size:
+                conjecture = random.choice(all_conjectures)
+                if labels[len(steps)]:
+                    conjecture_steps = conjecture['+']
+                else:
+                    conjecture_steps = conjecture['-']
 
-        conjectures = []
-        steps = []
-        i = 0
-        while len(steps) < batch_size:
-            conjecture = random.choice(all_conjectures)
-            if labels[i]:
-                conjecture_steps = conjecture['+']
-            else:
-                conjecture_steps = conjecture['-']
-            if not conjecture_steps:
-                continue
-            step = random.choice(conjecture_steps)
-            conjectures.append(conjecture['conj'])
-            steps.append(step)
-            i += 1
+                if conjecture_steps:
+                    step = random.choice(conjecture_steps)
+                    steps.append(step)
+                    if get_conjectures: conjectures.append(conjecture['conj'])
 
-        self.encoder.load_preselection(steps+conjectures)
-        return [self.encoder.encode(steps), self.encoder.encode(conjectures), self.encoder.get_preselection()], labels
+        preselection = None
+        if use_preselection:
+            if get_conjectures: preselection = self.encoder.load_preselection(steps+conjectures)
+            else: preselection = self.encoder.load_preselection(steps)
+
+        if get_conjectures:
+            conjectures = self.encoder(conjectures, preselection)
+
+        if self.step_as_index: steps = np.array(steps)
+        else: steps = self.encoder(steps, preselection)
+
+        result = [steps]
+        if get_conjectures: result.append(conjectures)
+        if preselection is not None: result.append(preselection.data)
+        result.append(labels)
+
+        if in_order: return result, (conjecture_index, step_index)
+        else: return result
+
+    def draw_random_batch_of_steps(self, split='train', batch_size=128, **kwargs):
+        return self.draw_batch(split, batch_size, get_conjectures = False, **kwargs)
+
+    def draw_batch_of_steps_in_order(self, begin_index=(0,0), split='train', batch_size=128):
+        return self.draw_batch(split, batch_size, get_conjectures = False, begin_index = begin_index, **kwargs)
+
+    def draw_batch_of_steps_and_conjectures_in_order(self, begin_index=(0,0), split='train', batch_size=128, **kwargs):
+        return self.draw_batch(split, batch_size, get_conjectures = True, begin_index = begin_index)
+
+    def draw_random_batch_of_steps_and_conjectures(self, split='train', batch_size=128, **kwargs):
+        return self.draw_batch(split, batch_size, get_conjectures = True, **kwargs)
 
 if __name__ == "__main__":
     # when loaded alone, just test that data can be loaded

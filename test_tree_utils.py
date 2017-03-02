@@ -182,13 +182,14 @@ def lines_to_tree_structure(lines):
 
     encoder = tu.TokenEncoder(('*', '/'))
     encoder.set_vocab(reverse_voc, vocabulary)
-    encoder.load_preselection(split_lines)
-    preselection = encoder.get_preselection()
+    preselection = encoder.load_preselection(split_lines)
+    #preselection = None
 
-    return encoder.encode(split_lines)
+    return encoder(split_lines, preselection)
 
 def collect_constant(index, cur_input = None):
-    w_index = preselection[index]
+    w_index = preselection.data[index]
+    #w_index = index
     if w_index < 0: result = '<unk>'
     else: result = vocabulary[w_index]
     if cur_input is None: return result
@@ -230,7 +231,8 @@ def test_down_flow(structure):
     const_values = np.concatenate(const_values)
 
     for d, c in zip(records_const, const_values):
-        w = preselection[c]
+        w = preselection.data[c]
+        #w = c
         if w < 0: d['array'][d['index']] = '<unk>'
         else: d['array'][d['index']] = vocabulary[w]
 

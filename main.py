@@ -25,20 +25,20 @@ def test_consistency(tests_num):
 
     index = (0,0)
     if args.conjectures:
-        ([steps, conjectures, preselection], labels), index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=tests_num)
+        [steps, conjectures, preselection, labels], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=tests_num)
         predictions, logits = network.predict(steps, conjectures, preselection)
     else:
-        ([steps, preselection], labels), index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=tests_num)
+        [steps, preselection, labels], index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=tests_num)
         predictions, logits = network.predict(steps, None, preselection)
 
     isolated_predictions, isolated_logits = [], []
     index = (0,0)
     for i in range(tests_num):
         if args.conjectures:
-            ([step, conjecture, preselection], labels), index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=1)
+            [step, conjecture, preselection, labels], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=1)
             prediction, logit = network.predict(step, conjecture, preselection)
         else:
-            ([step, preselection], labels), index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=1)
+            [step, preselection, labels], index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=1)
             prediction, logit = network.predict(step, None, preselection)
 
         isolated_predictions.append(prediction[0])
@@ -169,9 +169,9 @@ for epoch in range(1, args.epochs+1):
 
         # Draw training data
         if args.conjectures:
-            [steps, conjectures, preselection], labels = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=args.batch_size, split='train')
+            [steps, conjectures, preselection, labels] = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=args.batch_size, split='train')
         else:
-            [steps, preselection], labels = data_parser.draw_random_batch_of_steps(batch_size=args.batch_size, split='train')
+            [steps, preselection, labels] = data_parser.draw_random_batch_of_steps(batch_size=args.batch_size, split='train')
             conjectures = None
         # ... done
 
@@ -213,10 +213,10 @@ for epoch in range(1, args.epochs+1):
 
         # Draw testing data  
         if args.conjectures:
-            ([steps, conjectures, preselection], labels), index =\
+            [steps, conjectures, preselection, labels], index =\
                 data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=args.test_batch_size)
         else:
-            ([steps, preselection], labels), index =\
+            [steps, preselection, labels], index =\
                 data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=args.test_batch_size)
             conjectures = None
         # ... done

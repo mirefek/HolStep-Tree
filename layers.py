@@ -34,10 +34,12 @@ class UpLayer:
         if input_data is None: return constants
         else: return self.const_input_combiner(constants, input_data)
 
-    def __call__(self, structure, input_data = None):
+    def __call__(self, structure, input_data = None, use_recorders = None):
+
+        if use_recorders is None: use_recorders = self.use_recorders
 
         return tree.up_flow(self.interface, structure, self.functions,
-                            input_data = input_data, use_recorders = self.use_recorders)
+                            input_data = input_data, use_recorders = use_recorders)
 
 
 # down_flow followed by up_flow

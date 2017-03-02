@@ -5,7 +5,7 @@ TODO: rewrite into TensorFlow Fold (-> hopefully simplify)
 Tokenized formula is a list of indices from a fixed vocabulary in the prefix form. Only operations are
 application and abstraction, everything other is a constant.
 
-TokenEncoder.encode(input_lines) takes list of such formulas and creates data in format TreeStructure
+TokenEncoder.__call__(input_lines) takes list of such formulas and creates data in format TreeStructure
   which can be further processed by TensorFlow
 Every tree is divided into layers:
   last layer contains all roots, last but one contains descendants of roots and so on up to first layer
@@ -72,17 +72,24 @@ class TreeStructure:
             self.nodes_num.append(len(np_op_trees))
             self.layer_lens.append(np.array([len(layer) for layer in reversed(op_tree)]))
 
+class Preselection:
+    def __init__(self, data, translation):
+        self.data = data # indices into real dictionary or numpy array of words
+        self.translation = translation # dict: token -> index into data
+
 class TokenEncoder:
 
     def __init__(self, op_symbols, char_emb=False):
         assert(len(op_symbols) == op_num)
         self.op_symbols = op_symbols
-        self.op_dict = dict((-(i+1),i) for i in range(len(op_symbols)))
+        self.presel_op_dict = dict((-(i+1),i) for i in range(len(op_symbols)))
         # {-1: 0, -2: 1}, we represent operations by negative values in tokenized line translated into indices into preselection
         self.char_emb = char_emb
 
     def set_vocab(self, vocab, vocab_index):
         self.op_tokens = [vocab[symbol] for symbol in self.op_symbols]
+        self.token_op_dict = dict((token, i) for i, token in enumerate(self.op_tokens))
+        self.token_to_presel_op_dict = dict((token, -(i+1)) for i, token in enumerate(self.op_tokens))
         if self.char_emb: # we need to know all words only in character encoding
             vocab_unk = ['unk']+vocab_index
             char_set = set.union(*(set(w) for w in vocab_unk))
@@ -93,22 +100,24 @@ class TokenEncoder:
 
     def load_preselection(self, input_data_list):
         if len(input_data_list) == 0:
-            self.preselection = []
+            data = []
         else:
-            self.preselection = set.union(*[set(input_data) for input_data in input_data_list])
-            self.preselection -= set(self.op_tokens)
-            self.preselection = list(self.preselection)
+            data = set.union(*[set(input_data) for input_data in input_data_list])
+            data -= set(self.op_tokens)
+            data = list(data)
 
-        self.presel_dict = dict((preselected, index) for index, preselected in enumerate(self.preselection))
-        for i,op in enumerate(self.op_tokens): self.presel_dict[op] = -(i+1)
+        translation = dict((preselected, index) for index, preselected in enumerate(data))
+        translation.update(self.token_to_presel_op_dict)
 
-    def get_preselection(self):
         if self.char_emb: # TODO: be able to read unknown words in testing data by default
-            words = [self.vocab[i+1] for i in self.preselection]
+            words = [self.vocab[i+1] for i in data]
             maxlen = max(len(w) for w in words)
             words = [w+[-1]*(maxlen-len(w))+[len(w)] for w in words] # align words and add length to the end
-            return np.array(words)
-        else: return self.preselection
+            data = np.array(words)
+        else:
+            data = np.array(data)
+
+        return Preselection(data, translation)
 
     # expects that
     #   self.input_data is a list of indices into preselection plus operations -1, -2
@@ -133,14 +142,18 @@ class TokenEncoder:
         else:
             return [0, current, self.sample_index]
 
-    def encode(self, input_lines):
-        batch_size = len(input_lines)        
-        transformed_lines = [[self.presel_dict[token] for token in input_line] for input_line in input_lines]
+    def __call__(self, input_lines, preselection = None):
+        if preselection is not None:
+            self.op_dict = self.presel_op_dict
+            input_lines = [[preselection.translation.get(token, -1) for token in input_line] for input_line in input_lines]
+        else:
+            self.op_dict = self.token_op_dict
+            print(self.token_op_dict)
 
         # decode prefix form into layers
         roots = []
         self.output = [[] for _ in range(op_num)]
-        for self.sample_index, self.input_data in enumerate(transformed_lines):
+        for self.sample_index, self.input_data in enumerate(input_lines):
             self.index = 0
             roots.append(self._token_list_to_raw_instr(0))
             if self.index != len(self.input_data):

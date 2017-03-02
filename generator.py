@@ -18,11 +18,15 @@ from layers import *
 
 class Generator:
 
-    def __init__(self, dim, op_symbols, const_embeddings, preselection):
+    def __init__(self, dim, op_symbols, const_embeddings, preselection, up_layer = None):
 
         self.dim = dim
-        preselected = tf.gather(const_embeddings, preselection+1)
-        self.up_layer = UpLayer(dim, preselected, use_recorders = True)
+
+        if up_layer is not None: self.up_layer = up_layer
+        else:
+            preselected = tf.gather(const_embeddings, preselection+1)
+            self.up_layer = UpLayer(dim, preselected, use_recorders = True)
+
         self.interface = self.up_layer.interface
         down_appl, right_appl = make_gen_able_down_rnn(BasicGRU(dim), 'down_applications')
         down_abstr, right_abstr = make_gen_able_down_rnn(BasicGRU(dim), 'down_abstractions')
@@ -45,7 +49,7 @@ class Generator:
 
     def train(self, input_states, structure):
 
-        up_data, up_roots = self.up_layer(structure)
+        up_data, up_roots = self.up_layer(structure, use_recorders = True)
         down_data = tree.down_flow(self.interface, structure, self.down_op, up_data, input_states)
         node_types = [tf.tile(tf.constant([[op+1, 0]]), [tf.shape(structure.node_inputs[op])[0], 1])
                       for op in range(tree.op_num)]

@@ -36,11 +36,9 @@ class Network:
         with self.session.graph.as_default():
 
             self.embeddings = tf.tanh(tf.get_variable(name="raw_embeddings", shape=[vocab_size+1, dim]))
-            self.preselection = tf.placeholder(tf.int32, [None], name='preselection') # [words]
-            preselected = tf.gather(self.embeddings, self.preselection+1)
 
             interface = InterfaceTF(dim)
-            up_layer = tf.make_template('up_layer', UpLayer(dim, preselected))
+            up_layer = tf.make_template('up_layer', UpLayer(dim, self.embeddings))
 
             self.steps = TreePlaceholder()
             _, steps_roots1 = up_layer(self.steps) # Main line, computation through tree
@@ -58,24 +56,23 @@ class Network:
         # Finalize graph and log it if requested
         self.session.graph.finalize()
 
-    def train(self, steps, preselection, labels):
+    def train(self, steps, labels):
         data = self.steps.feed(steps)
         #data.update(self.conjectures.feed(conjectures))
-        data.update({ self.preselection: preselection, self.labels: labels })
+        data.update({ self.labels: labels })
         _, accuracy = self.session.run([self.training, self.accuracy], data)
 
         return accuracy
 
-    def evaluate(self, steps, preselection, labels):
+    def evaluate(self, steps, labels):
         data = self.steps.feed(steps)
         #data.update(self.conjectures.feed(conjectures))
-        data.update({ self.preselection: preselection, self.labels: labels })
+        data.update({ self.labels: labels })
         return self.session.run([self.accuracy, self.loss], data)
 
-    def predict(self, steps, preselection):
+    def predict(self, steps):
         data = self.steps.feed(steps)
         #data.update(self.conjectures.feed(conjectures))
-        data.update({ self.preselection: preselection })
 
         return predictions
 
@@ -90,10 +87,10 @@ batch_size = 64
 acumulated = 0.5
 for i in range(1000):
 
-    [steps, preselection], labels = data_parser.draw_random_batch_of_steps(batch_size=batch_size, split='train')
-    #[steps, conjectures, preselection], labels = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train')
+    [steps, labels] = data_parser.draw_random_batch_of_steps(batch_size=batch_size, split='train', use_preselection = False)
+    #[steps, conjectures, labels] = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train', use_preselection = False)
 
-    acc = network.train(steps, preselection, labels)
+    acc = network.train(steps, labels)
     acumulated = acumulated*0.99 + acc*0.01
 
     if (i+1)%100 == 0: print("{}: {}".format(i+1, acumulated))
@@ -106,11 +103,11 @@ processed_test_samples = 0
 
 batch_size = 128
 while True:
-    ([steps, preselection], labels), index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=batch_size)
-    #([steps, conjectures, preselection], labels), index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=128)
+    [steps, labels], index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=batch_size, use_preselection = False)
+    #[steps, conjectures, labels], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=128, use_preselection = False)
     if len(labels) == 0: break
 
-    accuracy, loss = network.evaluate(steps, preselection, labels)
+    accuracy, loss = network.evaluate(steps, labels)
 
     sum_accuracy += accuracy*len(labels)
     sum_loss += loss*len(labels)

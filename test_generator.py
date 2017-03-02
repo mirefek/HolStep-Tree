@@ -27,7 +27,7 @@ if __name__ == "__main__":
     network = Network(20, len(lines), ttu.vocabulary, ttu.reverse_voc, max_steps = 100)
     for i in range(401):
 
-        types_loss_acc, const_loss_acc = network.train(real_structure, ttu.preselection, np.arange(len(lines)))
+        types_loss_acc, const_loss_acc = network.train(real_structure, ttu.preselection.data, np.arange(len(lines)))
         if i%20 == 0:
             print("{}: types {},  const {}".format(i, types_loss_acc, const_loss_acc))
             predictions = network.predict(range(len(lines)))
