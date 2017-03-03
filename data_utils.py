@@ -117,22 +117,25 @@ class DataParser(object):
         self.discard_unknown = discard_unknown
         self.ignore_deps = ignore_deps
 
+        self.step_as_index = step_as_index
         self.train_conjectures = self.parse_file_list(train_fnames)
         self.val_conjectures = self.parse_file_list(val_fnames)
         if verbose: print("Loaded {} training conjectures, {} validation conjectures.".format(
             len(self.train_conjectures), len(self.val_conjectures)
         ))
 
-        self.step_as_index = step_as_index
         if step_as_index:
             steps_set = set()
-            for conj in train_conjectures:
+            for conj in self.train_conjectures:
                 for step in conj['+']+conj['-']:
                     steps_set.add(step)
-            steps_set = dict((step,i) for i,step in steps_set)
-            for conj in train_conjectures + val_conjectures:
+            self.max_step_index = len(steps_set)
+            steps_set = dict((step,i) for i,step in enumerate(steps_set))
+            for conj in self.train_conjectures + self.val_conjectures:
                 conj['+'] = [steps_set.get(step, -1) for step in conj['+'] ]
                 conj['-'] = [steps_set.get(step, -1) for step in conj['-'] ]
+
+        else: self.max_step_index = None
 
     def save_vocabulary(self, filename):
         f = open(filename, 'w')
@@ -234,7 +237,9 @@ class DataParser(object):
             elif marker in {'+', '-'}:
                 if self.simple_format: prefix_line = line
                 else: prefix_line = f.readline()
-                content = self.tokenize(prefix_line)
+
+                if self.step_as_index: content = prefix_line.rstrip()[2:]
+                else: content = self.tokenize(prefix_line)
 
                 if not (self.discard_unknown and min(content) < 0):
                     conjecture[marker].append(content)
@@ -299,7 +304,8 @@ class DataParser(object):
 
         preselection = None
         if use_preselection:
-            if get_conjectures: preselection = self.encoder.load_preselection(steps+conjectures)
+            if self.step_as_index: preselection = self.encoder.load_preselection(conjectures)
+            elif get_conjectures: preselection = self.encoder.load_preselection(steps+conjectures)
             else: preselection = self.encoder.load_preselection(steps)
 
         if get_conjectures:
@@ -330,4 +336,5 @@ class DataParser(object):
 
 if __name__ == "__main__":
     # when loaded alone, just test that data can be loaded
-    parser = DataParser("mizar-dataset", None, simple_format = True, divide_test = 0.1)
+    parser = DataParser("mizar-dataset", None, simple_format = True, divide_test = 0.1, step_as_index = True)
+    print(parser.max_step_index)

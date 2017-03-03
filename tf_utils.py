@@ -16,3 +16,16 @@ def partitioned_avg(data, types, typesnum):
     nums = tf.unsorted_segment_sum(tf.ones_like(data), types, typesnum)
 
     return sums/(nums+0.00001)
+
+def linear_gather(inputs, indices, index_bound):
+
+    input_size = inputs.get_shape()[-1]
+    with tf.variable_scope("fully_connected_gathered"):
+        kernel = tf.get_variable('kernel', shape=[index_bound, input_size], trainable = True)
+        bias = tf.get_variable('bias', shape=[index_bound], trainable = True)
+
+        cur_kernel = tf.gather(kernel, indices)
+        cur_bias = tf.gather(bias, indices)
+        outputs = tf.reduce_sum(cur_kernel*inputs, axis=1) + cur_bias
+
+    return outputs

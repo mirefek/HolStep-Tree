@@ -91,12 +91,14 @@ cmd_parser.add_argument("--no-log_dir", dest='log_dir', action='store_const', co
 cmd_parser.add_argument('--conjectures', dest='conjectures', action='store_true', help="Use conjectures (conditioned classification).")
 cmd_parser.add_argument('--no-conjectures', dest='conjectures', action='store_false')
 cmd_parser.set_defaults(conjectures=True)
-cmd_parser.add_argument('--char_emb', dest='char_emb', action='store_true', help="Use character embeddings, warning: still not able to read words outside training dictionary. (TODO)")
+cmd_parser.add_argument('--char_emb', dest='char_emb', action='store_true', help="Use character embeddings")
 cmd_parser.set_defaults(char_emb=False)
 cmd_parser.add_argument('--pooling', dest='pooling', action='store_true', help="Use max pooling on steps.")
 cmd_parser.set_defaults(pooling=False)
 cmd_parser.add_argument('--extra_layer', dest='extra_layer', action='store_true', help="Use one more down_up layer.")
 cmd_parser.set_defaults(extra_layer=False)
+cmd_parser.add_argument('--step_as_index', dest='step_as_index', action='store_true', help="Ignore the inner structure of a step.")
+cmd_parser.set_defaults(step_as_index=False)
 cmd_parser.add_argument('--word2vec', default=None, nargs=2, type=float, help="Word2vec-like encoding, expects two coeficient for type_loss and const_loss respectively.")
 cmd_parser.add_argument('--known_only', dest='known_only', action='store_true', help="Discard data with unknown tokens.")
 cmd_parser.add_argument('--allow_unknown', dest='known_only', action='store_false')
@@ -128,7 +130,7 @@ data_parser = DataParser(args.data_path, encoder = encoder, voc_filename = args.
                          discard_unknown = args.known_only, ignore_deps = True, verbose = not args.quiet,
                          simple_format = args.simple_data,
                          divide_test = args.divide_test_data, truncate_test = args.truncate_test_data, truncate_train = args.truncate_train_data,
-                         complete_vocab = args.char_emb
+                         complete_vocab = args.char_emb, step_as_index = args.step_as_index
 )
 
 if args.measure_memory:
@@ -141,12 +143,14 @@ if args.pooling: expname += "-pooling"
 if args.char_emb: expname += "-char_emb"
 if args.pooling: expname += "-pooling"
 if args.extra_layer: expname += "-extra_layer"
+if args.step_as_index: expname += "-step_as_index"
 if args.word2vec is not None: expname += "-w2vec-{}-{}".format(args.word2vec[0], args.word2vec[1])
 network = Network(logdir = args.log_dir, threads = args.threads, expname = expname)
 network.construct(vocab_size = len(data_parser.vocabulary_index), use_conjectures=args.conjectures,
                   dim=args.rnn_dim, hidden_size=args.hidden,
                   extra_layer = args.extra_layer, w2vec = args.word2vec,
-                  use_pooling = args.pooling, num_chars = encoder.char_num)
+                  use_pooling = args.pooling, num_chars = encoder.char_num,
+                  max_step_index = data_parser.max_step_index)
 if args.log_graph: network.log_graph()
 if args.log_embeddings: network.log_vocabulary(data_parser.vocabulary_index)
 

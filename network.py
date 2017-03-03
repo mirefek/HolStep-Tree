@@ -12,7 +12,7 @@ import datetime
 from tensorflow.contrib.tensorboard.plugins import projector
 
 import tree_utils as tree
-from tf_utils import partitioned_avg, predict_loss_acc
+from tf_utils import partitioned_avg, predict_loss_acc, linear_gather
 from tf_tree_utils import TreePlaceholder, InterfaceTF
 from cells import *
 from layers import *
@@ -36,7 +36,11 @@ class Network:
         else:
             self.summary_writer = None
 
-    def construct(self, vocab_size, dim, hidden_size, use_conjectures = False, extra_layer=False, use_pooling=False, w2vec=False, num_chars=None):
+    def construct(self, vocab_size, dim, hidden_size, use_conjectures = False, extra_layer=False, use_pooling=False, w2vec=False, num_chars=None, max_step_index = None):
+
+        self.step_as_tree = (max_step_index is None)
+        if not self.step_as_tree and not use_conjectures: ValueError('At least one of use_conjectures, step_as_tree (max_step_index = None) must be enabled')
+
         with self.session.graph.as_default():
 
             with tf.name_scope("embeddings"):
@@ -69,14 +73,18 @@ class Network:
             up_layer = tf.make_template('layer1', UpLayer(dim, preselected, use_recorders = use_pooling or extra_layer or w2vec))
             #up_layer = UpLayer(dim, preselected, use_recorders = use_pooling or extra_layer)
 
-            self.steps = TreePlaceholder()
-            steps_nodes1, steps_roots1 = up_layer(self.steps)
+            if self.step_as_tree:
+                self.steps = TreePlaceholder()
+                steps_nodes1, steps_roots1 = up_layer(self.steps)
+            else:
+                self.steps = tf.placeholder(tf.int32, [None], name='steps') # [bs]
 
             if use_conjectures:
                 with tf.name_scope("conjectures"):
                     self.conjectures = TreePlaceholder()
                     conj_nodes1, conj_roots1 = up_layer(self.conjectures)
-                    layer1_out = tf.concat([steps_roots1, conj_roots1], 1)
+                    if self.step_as_tree: layer1_out = tf.concat([steps_roots1, conj_roots1], 1)
+                    else: layer1_out = conj_roots1
 
             else:
                 layer1_out = steps_roots1
@@ -84,18 +92,19 @@ class Network:
             if extra_layer:
                 hidden1 = tf_layers.fully_connected(layer1_out, num_outputs=hidden_size, activation_fn = tf.nn.relu)
 
-                steps2_in = tf_layers.fully_connected(hidden1, num_outputs=dim, activation_fn = tf.tanh)
-                conj2_in = tf_layers.fully_connected(hidden1, num_outputs=dim, activation_fn = tf.tanh)
+                if self.step_as_tree:
+                    steps2_in = tf_layers.fully_connected(hidden1, num_outputs=dim, activation_fn = tf.tanh)
+                    down_up_layer = tf.make_template('layer2', DownUpLayer(dim, preselected, use_recorders = use_pooling))
+                    steps_nodes2, steps_roots2 = down_up_layer(self.steps, steps_nodes1, steps2_in)
 
-                down_up_layer = tf.make_template('layer2', DownUpLayer(dim, preselected, use_recorders = use_pooling))
-                steps_nodes2, steps_roots2 = down_up_layer(self.steps, steps_nodes1, steps2_in)
-
-                step_nodes_last = steps_nodes1
+                    step_nodes_last = steps_nodes1
 
                 if use_conjectures:
+                    conj2_in = tf_layers.fully_connected(hidden1, num_outputs=dim, activation_fn = tf.tanh)
                     conj_nodes2, conj_roots2 = down_up_layer(self.conjectures, conj_nodes1, conj2_in)
                     conj_nodes_last = conj_nodes2
-                    layer2_out = tf.concat([steps_roots2, conj_roots2], 1)
+                    if self.step_as_tree: layer2_out = tf.concat([steps_roots2, conj_roots2], 1)
+                    else: layer2_out = conj_roots2
                 else:
                     layer2_out = steps_roots2
 
@@ -103,25 +112,29 @@ class Network:
 
             else:
                 layers_out = layer1_out
-                step_nodes_last = steps_nodes1
+                if self.step_as_tree: step_nodes_last = steps_nodes1
                 if use_conjectures: conj_nodes_last = conj_nodes1
 
             if use_pooling:
-                with tf.name_scope("steps_pool"):
-                    data = tree.flatten_node_inputs(interface, step_nodes_last)
-                    samples = tree.flatten_node_inputs(interface, self.steps.node_sample)
-                    pooled = partitioned_avg(data, samples, self.steps.batch_size)
+                with tf.name_scope("avg pool"):
+                    if self.step_as_tree:
+                        data = tree.flatten_node_inputs(interface, step_nodes_last)
+                        samples = tree.flatten_node_inputs(interface, self.steps.node_sample)
+                        pooled = partitioned_avg(data, samples, self.steps.batch_size)
                     if use_conjectures:
                         data_c = tree.flatten_node_inputs(interface, conj_nodes_last) # [?, dim]
                         samples_c = tree.flatten_node_inputs(interface, self.conjectures.node_sample) # [?, dim]
                         pooled_c = partitioned_avg(data_c, samples_c, self.conjectures.batch_size) # [bs, dim]
-                        pooled = tf.concat([pooled, pooled_c], 1) # [bs, dim*2]
+                        if self.step_as_tree: pooled = tf.concat([pooled, pooled_c], 1) # [bs, dim*2]
+                        else: pooled = pooled_c
 
                 layers_out = tf.concat([layers_out, pooled], 1)
 
             with tf.name_scope("output"):
                 hidden = tf_layers.fully_connected(layers_out, num_outputs=hidden_size, activation_fn = tf.nn.relu)
-                self.logits = tf_layers.linear(hidden, num_outputs = 2)
+                if self.step_as_tree: self.logits = tf_layers.linear(hidden, num_outputs = 2)
+                else: self.logits = tf.concat([tf.expand_dims(linear_gather(hidden, self.steps+1, max_step_index+1), 1),
+                                               tf.zeros([self.conjectures.batch_size, 1], dtype=tf.float32)], 1)
 
                 self.labels = tf.placeholder(tf.int32, [None])
                 self.predictions, self.loss, self.accuracy = predict_loss_acc(self.logits, self.labels)
@@ -136,7 +149,14 @@ class Network:
                 #else: gl_roots = None
                 #sample_mask = tf.cast(self.labels, tf.bool)
                 gl_roots, sample_mask = None, None
-                (types_loss, types_acc), (const_loss, const_acc) = guessing_layer(self.steps, steps_nodes1, roots = gl_roots, sample_mask = sample_mask)
+                if self.step_as_tree:
+                    guess_struct = self.steps
+                    guess_input_data = steps_nodes1
+                else:
+                    guess_struct = self.conjectures
+                    guess_input_data = conj_nodes1
+
+                (types_loss, types_acc), (const_loss, const_acc) = guessing_layer(guess_struct, guess_input_data, roots = gl_roots, sample_mask = sample_mask)
                 summary += [tf.summary.scalar("train/types_loss", types_loss),
                             tf.summary.scalar("train/const_loss", const_loss),
                             tf.summary.scalar("train/types_acc", types_acc),
@@ -186,7 +206,9 @@ class Network:
 
     def _prepare_data(self, steps=None, conjectures=None, preselection=None, labels=None, dropout=None):
         result = {}
-        if steps is not None: result.update(self.steps.feed(steps))
+        if steps is not None:
+            if self.step_as_tree: result.update(self.steps.feed(steps))
+            else: result.update({ self.steps: steps })
         if conjectures is not None: result.update(self.conjectures.feed(conjectures))
         if preselection is not None: result.update({self.preselection: preselection})
         if labels is not None: result.update({self.labels: labels})
