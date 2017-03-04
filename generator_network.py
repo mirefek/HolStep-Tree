@@ -19,8 +19,8 @@ This network is also imported by a less serious test_generator
 
 class Network:
 
-    def __init__(self, dim, len_lines, vocabulary, reverse_voc, max_steps = 100,
-                 gen_by_conjecture = False, logdir = None, train_simplest = False):
+    def __init__(self, dim, len_lines, vocabulary, reverse_voc, max_loss = 20,
+                 gen_by_conjecture = False, logdir = None, loss_weight = 1):
 
         vocab_size = len(vocabulary)
         self.len_lines = len_lines
@@ -66,10 +66,10 @@ class Network:
             generator = Generator(dim, op_symbols, embeddings, self.preselection, up_layer = up_layer)
 
             (self.types_loss, self.types_acc), (self.const_loss, self.const_acc) =\
-                generator.train(init_states, self.structure, use_min = train_simplest)
+                generator.train(init_states, self.structure, loss_weight)
             self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False, name="global_step")
             self.training = tf.train.AdamOptimizer().minimize(self.types_loss+self.const_loss, global_step = self.global_step)
-            self.prediction = generator(init_state, max_steps = max_steps)
+            self.prediction, self.uncertainity = generator(init_state, max_loss = max_loss)
 
             # Summaries
             summary = [tf.summary.scalar("train/types_loss", self.types_loss),
@@ -117,6 +117,7 @@ class Network:
     def predict(self, samples, encoder = None):
 
         predictions = []
+        uncertainities = []
         for s in samples:
             if self.gen_by_conjecture:
                 preselection = encoder.load_preselection([s])
@@ -124,25 +125,27 @@ class Network:
                 data.update({self.preselection: preselection.data})
             else: data = {self.line_indices: [s]}
 
-            prediction = self.session.run(self.prediction, data)
+            prediction, uncertainity = self.session.run([self.prediction, self.uncertainity], data)
             prediction = ' '.join([self.ext_vocab[w+1] for w in prediction])
             predictions.append(prediction)
+            uncertainities.append(uncertainity)
 
-        return predictions
+        return predictions, uncertainities
 
     def generate_to_file(self, encoder, conjectures, filename):
         conj_statements = [conj_data['conj'] for conj_data in conjectures]
-        predictions = self.predict(conj_statements, encoder)
+        predictions, uncertainities = self.predict(conj_statements, encoder)
         if self.logdir: filename = os.path.join(self.logdir, filename)
         f = open(filename, 'w')
-        for conj_data, step in zip(conjectures, predictions):
+        for conj_data, step, uncert in zip(conjectures, predictions, uncertainities):
             print("F {}".format(conj_data['filename']), file=f)
             print("G {}".format(step), file=f)
+            print("L {}".format(uncert), file=f)
         f.close()
 
 if __name__ == "__main__":
 
-    train_simplest = True
+    loss_weight = -0.5
     logdir = "./logs-generator/"
     truncate = 1
     # debugging simplification
@@ -154,15 +157,15 @@ if __name__ == "__main__":
                              truncate_train = truncate, truncate_test = truncate)
     network = Network(128, 0,
                       data_parser.vocabulary_index, data_parser.reverse_vocabulary_index,
-                      max_steps = 1000, gen_by_conjecture = True, logdir = logdir,
-                      train_simplest = train_simplest)
+                      max_loss = 20, gen_by_conjecture = True, logdir = logdir,
+                      loss_weight = loss_weight)
 
     epochs = 20
+    acumulated = [2, 0.5, 2, 0]
     for epoch in range(epochs):
         batch_size = 64
 
-        acumulated = [2, 0.5, 2, 0]
-        for i in range(2000):
+        for i in range(200):
 
             steps, conjectures, preselection, _ = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train', only_pos = True)
 
