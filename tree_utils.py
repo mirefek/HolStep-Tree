@@ -148,7 +148,7 @@ class TokenEncoder:
             input_lines = [[preselection.translation.get(token, -1) for token in input_line] for input_line in input_lines]
         else:
             self.op_dict = self.token_op_dict
-            print(self.token_op_dict)
+            #print(self.token_op_dict)
 
         # decode prefix form into layers
         roots = []

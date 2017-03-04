@@ -1,6 +1,8 @@
 from __future__ import print_function
 
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as tf_layers
@@ -17,7 +19,8 @@ This network is also imported by a less serious test_generator
 
 class Network:
 
-    def __init__(self, dim, len_lines, vocabulary, reverse_voc, max_steps = 100, gen_by_conjecture = False, logdir = None):
+    def __init__(self, dim, len_lines, vocabulary, reverse_voc, max_steps = 100,
+                 gen_by_conjecture = False, logdir = None, train_simplest = False):
 
         vocab_size = len(vocabulary)
         self.len_lines = len_lines
@@ -63,7 +66,7 @@ class Network:
             generator = Generator(dim, op_symbols, embeddings, self.preselection, up_layer = up_layer)
 
             (self.types_loss, self.types_acc), (self.const_loss, self.const_acc) =\
-                generator.train(init_states, self.structure)
+                generator.train(init_states, self.structure, use_min = train_simplest)
             self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False, name="global_step")
             self.training = tf.train.AdamOptimizer().minimize(self.types_loss+self.const_loss, global_step = self.global_step)
             self.prediction = generator(init_state, max_steps = max_steps)
@@ -116,9 +119,9 @@ class Network:
         predictions = []
         for s in samples:
             if self.gen_by_conjecture:
-                encoder.load_preselection([s])
-                data = self.conjectures.feed(encoder.encode([s]))
-                data.update({self.preselection: encoder.get_preselection()})
+                preselection = encoder.load_preselection([s])
+                data = self.conjectures.feed(encoder([s], preselection))
+                data.update({self.preselection: preselection.data})
             else: data = {self.line_indices: [s]}
 
             prediction = self.session.run(self.prediction, data)
@@ -139,20 +142,29 @@ class Network:
 
 if __name__ == "__main__":
 
+    train_simplest = True
+    logdir = "./logs-generator/"
+    truncate = 1
+    # debugging simplification
+    #logdir = None
+    #truncate = 0.01
+
     encoder = tree.TokenEncoder(('*', '/'))
-    data_parser = DataParser("./e-hol-ml-dataset/", encoder = encoder, ignore_deps = True)
+    data_parser = DataParser("./e-hol-ml-dataset/", encoder = encoder, ignore_deps = True,
+                             truncate_train = truncate, truncate_test = truncate)
     network = Network(128, 0,
                       data_parser.vocabulary_index, data_parser.reverse_vocabulary_index,
-                      max_steps = 1000, gen_by_conjecture = True, logdir = "./logs-generator/")
+                      max_steps = 1000, gen_by_conjecture = True, logdir = logdir,
+                      train_simplest = train_simplest)
 
-    epochs = 40
+    epochs = 20
     for epoch in range(epochs):
         batch_size = 64
 
-        acumulated = [2, 0.5, 2, 0.5]
+        acumulated = [2, 0.5, 2, 0]
         for i in range(2000):
 
-            steps, conjectures, preselection = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train', only_pos = True)
+            steps, conjectures, preselection, _ = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train', only_pos = True)
 
             types_loss_acc, const_loss_acc = network.train(steps, preselection, conjectures)
             loss_acc = list(types_loss_acc+const_loss_acc)
@@ -166,7 +178,7 @@ if __name__ == "__main__":
 
         batch_size = 128
         while True:
-            [steps, conjectures, preselection], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=128, only_pos = True)
+            [steps, conjectures, preselection, labels], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=128, only_pos = True)
             if len(labels) == 0: break
 
             types_loss_acc, const_loss_acc = network.evaluate(steps, preselection, conjectures)

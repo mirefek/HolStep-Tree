@@ -11,7 +11,7 @@ import datetime
 from tensorflow.contrib.tensorboard.plugins import projector
 
 import tree_utils as tree
-from tf_utils import predict_loss_acc
+from tf_utils import partitioned_avg
 from tf_tree_utils import InterfaceTF
 from cells import *
 from layers import *
@@ -47,7 +47,27 @@ class Generator:
 
         self.const_range = (op_mask*tf.range(self.vocab_size+1))-1
 
-    def train(self, input_states, structure):
+    def loss_acc(self, logits, real, partitions_for_min = None, batch_size = 1): # [bs, possib], [bs]
+
+        typesnum = logits.get_shape()[1]
+
+        predict = tf.to_int32(tf.argmax(logits, 1))
+        acc = tf.to_float(tf.equal(predict, real))
+        prob = tf.nn.softmax(logits)
+        onehot_real = tf.one_hot(real, typesnum)
+        loss = -tf.log(tf.reduce_sum(onehot_real*prob, axis = 1))
+
+        if partitions_for_min is None: return tf.reduce_sum(loss), tf.reduce_sum(acc)/tf.to_float(tf.size(real))
+
+        loss = tf.unsorted_segment_sum(loss, partitions_for_min, batch_size)
+        acc = partitioned_avg(acc, partitions_for_min, batch_size)
+        #loss = tf.Print(loss, [loss, acc])
+        loss = tf.reduce_min(loss)
+        acc = tf.reduce_max(acc)
+
+        return loss, acc
+
+    def train(self, input_states, structure, use_min = None):
 
         up_data, up_roots = self.up_layer(structure, use_recorders = True)
         down_data = tree.down_flow(self.interface, structure, self.down_op, up_data, input_states)
@@ -58,19 +78,30 @@ class Generator:
         # flatten
         up_data = tree.flatten_node_inputs(self.interface, up_data, up_roots)
         down_data = tree.flatten_node_inputs(self.interface, down_data, input_states)
-        structure = tree.flatten_node_inputs(self.interface, structure.node_inputs, structure.roots)
+        structure_f = tree.flatten_node_inputs(self.interface, structure.node_inputs, structure.roots)
         types_real = tree.flatten_node_inputs(self.interface, node_types, roots_types)
-        types2_real, const_real = tf.unstack(structure, axis=1)
-        # guess constants
+        types2_real, const_real = tf.unstack(structure_f, axis=1)
+        # flatten indices to original samples
+        if use_min: partitions_for_min = tree.flatten_node_inputs(self.interface, structure.node_sample, structure.roots_sample)
+        else: partitions_for_min = None
+        # mask constants
         const_mask = tf.equal(types2_real, 0)
         const_real = tf.boolean_mask(const_real, const_mask)
         const_real = tf.gather(self.preselection, const_real)+1
         down_data_cmask = tf.boolean_mask(down_data, const_mask)
+        if use_min: partitions_for_min_cmask = tf.boolean_mask(partitions_for_min, const_mask)
+        else: partitions_for_min_cmask = None
+        # guess constants and types
         const_logits = self.const_guesser(down_data_cmask)
-        _, const_loss, const_acc = predict_loss_acc(const_logits, const_real)
-        # guess types
         types_logits = self.type_guesser(down_data, up_data)
-        _, types_loss, types_acc = predict_loss_acc(types_logits, types_real)
+
+        # loss and accuracy
+        const_loss, const_acc = self.loss_acc(const_logits, const_real,
+                                              partitions_for_min = partitions_for_min_cmask,
+                                              batch_size = structure.batch_size)
+        types_loss, types_acc = self.loss_acc(types_logits, types_real,
+                                              partitions_for_min = partitions_for_min,
+                                              batch_size = structure.batch_size)
 
         return (types_loss, types_acc), (const_loss, const_acc)
 
