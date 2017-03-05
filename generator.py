@@ -101,7 +101,29 @@ class Generator:
         types_loss = tf.reduce_sum(types_loss * weights)
         types_acc = tf.reduce_sum(types_acc * weights)
 
-        return (types_loss, types_acc), (const_loss, const_acc), 
+        return (types_loss, types_acc), (const_loss, const_acc),
+
+    # TODO: following function is not finished, auxiliary functions missing
+    def proc_generate(self, input_state, loss):
+
+        node, loss_c = self.proc_generate_const(input_state)
+        op_type, loss_t = self.proc_generate_type(input_state, node[1])
+
+        loss += loss_t+loss_c
+        while(op_type != 0 and loss < self.max_loss):
+            input_state = self.proc_next_state(input_state, node[1])
+            next_node, loss = proc_generate(input_state, loss)
+
+            node = proc_encode_op(node, next_node, op_type-1)
+            op_type, loss_t = proc_generate_type(input_state, node[1])
+
+        return node, loss
+
+    # TODO: procedural version of generator
+    #def proc_generate_const(self, input_state):
+    #def proc_generate_type(self, input_state, tree_embedding):
+    #def proc_next_state(self, input_state, tree_embedding):
+    #def proc_encode_op(tree1, tree2, operation), tree = (string, embedding)
 
     """ procedural pseudocode:
 

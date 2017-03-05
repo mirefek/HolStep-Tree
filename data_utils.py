@@ -66,7 +66,7 @@ class DataParser(object):
     def __init__(self, source_dir, encoder, verbose=1, voc_filename=None,
                  discard_unknown = False, ignore_deps = False, simple_format = False,
                  check_input = False, divide_test = None, truncate_train = 1, truncate_test = 1,
-                 complete_vocab = False, step_as_index = False):
+                 complete_vocab = False, step_as_index = False, def_fname = None):
         random.seed(1337)
 
         self.simple_format = simple_format
@@ -99,8 +99,12 @@ class DataParser(object):
         else:
             if verbose:
                 logging.info('Building vocabulary...')
-            if complete_vocab: self.vocabulary_index = self.build_vocabulary(train_fnames+val_fnames)
-            else: self.vocabulary_index = self.build_vocabulary(train_fnames)
+
+            vocab_fnames = train_fnames
+            if complete_vocab: vocab_fnames = vocab_fnames + val_fnames
+            if def_fname: vocab_fnames = vocab_fnames + [def_fname]
+
+            self.vocabulary_index = self.build_vocabulary(vocab_fnames)
             if voc_filename: self.save_vocabulary(voc_filename)
 
         if verbose:
@@ -123,6 +127,8 @@ class DataParser(object):
         if verbose: print("Loaded {} training conjectures, {} validation conjectures.".format(
             len(self.train_conjectures), len(self.val_conjectures)
         ))
+
+        if def_fname: self.definitions = self.parse_definitions(def_fname)
 
         if step_as_index:
             steps_set = set()
@@ -153,7 +159,7 @@ class DataParser(object):
         for fname in fnames:
             f = open(fname)
             for line in f:
-                if self.simple_format or line[0] == 'P':
+                if self.simple_format or line[0] == 'P' or line[0] == 'd':
                     for token in line.rstrip()[2:].split():
                         if token not in vocabulary_freq:
                             vocabulary_freq[token] = 1
@@ -246,7 +252,18 @@ class DataParser(object):
 
         return conjecture
 
-    def draw_batch(self, split, batch_size, get_conjectures = True, only_pos = False, begin_index = None, use_preselection = True):
+    def parse_definitions(self, fname):
+
+        result = []
+        f =  open(fname)
+        for line in f:
+            sline = line.rstrip()[2:].split()
+            tokens = [self.reverse_vocabulary_index[w] for w in sline]
+            result.append((tokens[0], tokens[1:]))
+
+        return result
+
+    def draw_batch(self, split, batch_size, get_conjectures = True, only_pos = False, begin_index = None, use_preselection = True, definitions_size = None):
 
         in_order = (begin_index is not None)
 
@@ -257,6 +274,8 @@ class DataParser(object):
         else:
             raise ValueError('`split` must be in {"train", "val"}.')
 
+        # Preparation of steps and conjectures
+        
         steps = []
         conjectures = []
         if in_order:
@@ -302,37 +321,69 @@ class DataParser(object):
                     steps.append(step)
                     if get_conjectures: conjectures.append(conjecture['conj'])
 
-        preselection = None
-        if use_preselection:
-            if self.step_as_index: preselection = self.encoder.load_preselection(conjectures)
-            elif get_conjectures: preselection = self.encoder.load_preselection(steps+conjectures)
-            else: preselection = self.encoder.load_preselection(steps)
+        # Preparation of definitions
 
+        if definitions_size is not None:
+            definitions = []
+            while len(definitions) < definitions_size: definitions.append(random.choice(self.definitions))
+            def_tokens = [token for token, definition in definitions]
+            definitions = [definition for token, definition in definitions]
+
+        # Preselection -- the used words
+
+        if use_preselection:
+            all_data = []
+            if definitions_size is not None: all_data = all_data + [def_tokens] + definitions
+            if not self.step_as_index: all_data = all_data + steps
+            if get_conjectures: all_data = all_data + conjectures
+            preselection = self.encoder.load_preselection(all_data)
+
+            if definitions_size is not None:
+                def_tokens = [preselection.translation[token] for token in def_tokens]
+
+        else: preselection = None
+
+        # encoding data
+        
+        if definitions_size is not None:
+            definitions = self.encoder(definitions, preselection)
+            def_tokens = np.array(def_tokens)
         if get_conjectures:
             conjectures = self.encoder(conjectures, preselection)
 
         if self.step_as_index: steps = np.array(steps)
         else: steps = self.encoder(steps, preselection)
 
-        result = [steps]
-        if get_conjectures: result.append(conjectures)
-        if preselection is not None: result.append(preselection.data)
-        result.append(labels)
+        # Packing data
 
-        if in_order: return result, (conjecture_index, step_index)
-        else: return result
+        batch = dict()
+        batch['steps'] = steps
+        if get_conjectures: batch['conjectures'] = conjectures
+        if preselection is not None: batch['preselection'] = preselection.data
+        if definitions_size is not None:
+            batch['def_tokens'] = def_tokens
+            batch['definitions'] = definitions
+        batch['labels'] = labels
+        batch['size'] = len(labels)
+
+        if in_order: return batch, (conjecture_index, step_index)
+        else: return batch
 
     def draw_random_batch_of_steps(self, split='train', batch_size=128, **kwargs):
-        return self.draw_batch(split, batch_size, get_conjectures = False, **kwargs)
+        batch = self.draw_batch(split, batch_size, get_conjectures = False, **kwargs)
+        return [batch['steps'], batch['preselection'], batch['labels']]
 
     def draw_batch_of_steps_in_order(self, begin_index=(0,0), split='train', batch_size=128):
-        return self.draw_batch(split, batch_size, get_conjectures = False, begin_index = begin_index, **kwargs)
+        batch, index = self.draw_batch(split, batch_size, get_conjectures = False, begin_index = begin_index, **kwargs)
+        return [batch['steps'], batch['preselection'], batch['labels']], index
 
     def draw_batch_of_steps_and_conjectures_in_order(self, begin_index=(0,0), split='train', batch_size=128, **kwargs):
-        return self.draw_batch(split, batch_size, get_conjectures = True, begin_index = begin_index)
+        batch, index = self.draw_batch(split, batch_size, get_conjectures = True, begin_index = begin_index)
+        return [batch['steps'], batch['conjectures'], batch['preselection'], batch['labels']], index
 
     def draw_random_batch_of_steps_and_conjectures(self, split='train', batch_size=128, **kwargs):
-        return self.draw_batch(split, batch_size, get_conjectures = True, **kwargs)
+        batch = self.draw_batch(split, batch_size, get_conjectures = True, **kwargs)
+        return [batch['steps'], batch['conjectures'], batch['preselection'], batch['labels']]
 
 if __name__ == "__main__":
     # when loaded alone, just test that data can be loaded

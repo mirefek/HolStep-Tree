@@ -48,7 +48,8 @@ class TreeStructure:
     def __init__(self, layers, roots):
 
         self.batch_size = len(roots)
-        self.roots = np.array(roots)
+        if len(roots) > 0: self.roots = np.array(roots)
+        else: self.roots = np.zeros([0, 3], int)
         self.roots_sample = self.roots[:,2]
         self.roots = np.array(self.roots[:,:2])
 
