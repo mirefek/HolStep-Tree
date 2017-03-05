@@ -129,6 +129,7 @@ class DataParser(object):
         ))
 
         if def_fname: self.definitions = self.parse_definitions(def_fname)
+        else: self.definitions = None
 
         if step_as_index:
             steps_set = set()
@@ -265,6 +266,7 @@ class DataParser(object):
 
     def draw_batch(self, split, batch_size, get_conjectures = True, only_pos = False, begin_index = None, use_preselection = True, definitions_size = None):
 
+        if self.definitions is None: definitions_size = None
         in_order = (begin_index is not None)
 
         if split == 'train':
