@@ -145,7 +145,7 @@ class Network:
 
 if __name__ == "__main__":
 
-    loss_weight = -0.5
+    loss_weight = -0.2
     logdir = "./logs-generator/"
     truncate = 1
     # debugging simplification
@@ -165,7 +165,7 @@ if __name__ == "__main__":
     for epoch in range(epochs):
         batch_size = 64
 
-        for i in range(200):
+        for i in range(2000):
 
             steps, conjectures, preselection, _ = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train', only_pos = True)
 

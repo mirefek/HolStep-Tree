@@ -93,14 +93,15 @@ class Generator:
         const_loss, const_acc = self.loss_acc(const_logits, const_real, sample_indices_cmask, structure.batch_size)
         types_loss, types_acc = self.loss_acc(types_logits, types_real, sample_indices, structure.batch_size)
         # summary
-        weights = tf.pow(const_loss+types_loss, loss_weight)
+        total_loss = tf.minimum(tf.maximum(const_loss+types_loss, 0.0001), 10000)
+        weights = tf.pow(total_loss, loss_weight)
         weights = weights / tf.reduce_sum(weights)
         const_loss = tf.reduce_sum(const_loss * weights)
         const_acc = tf.reduce_sum(const_acc * weights)
         types_loss = tf.reduce_sum(types_loss * weights)
         types_acc = tf.reduce_sum(types_acc * weights)
 
-        return (types_loss, types_acc), (const_loss, const_acc)
+        return (types_loss, types_acc), (const_loss, const_acc), 
 
     """ procedural pseudocode:
 
