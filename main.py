@@ -106,6 +106,7 @@ cmd_parser.add_argument("--test_batch_size", default=128, type=int, help="Batch 
 cmd_parser.add_argument("--rnn_dim", default=128, type=int, help="Dimension of RNN state.")
 #cmd_parser.add_argument("--appl_hidden", default=128, type=int, help="Size of hidden layer in 'applications'.")
 cmd_parser.add_argument("--hidden", default=256, type=int, help="Size of the final hidden layer.")
+cmd_parser.add_argument("--o_dropout", default=0.5, type=float, help="Input dropout coefficient.")
 cmd_parser.add_argument("--i_dropout", default=0.5, type=float, help="Input dropout coefficient.")
 cmd_parser.add_argument("--i_dropout_protect", default=0.2, type=float, help="Fraction of vocabulary protected before dropout.")
 cmd_parser.add_argument('--log_graph', dest='log_graph', action='store_true', help="Add graph to tensorflow log.")
@@ -184,7 +185,7 @@ for epoch in range(1, args.epochs+1):
             start_time = time.time()
 
         # Train
-        accuracy = network.train(batch, dropout=(args.i_dropout, args.i_dropout_protect))
+        accuracy = network.train(batch, dropout=(args.i_dropout, args.i_dropout_protect, args.o_dropout))
         # ... done
 
         if args.measure_time:

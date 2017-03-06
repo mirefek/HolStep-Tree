@@ -83,6 +83,7 @@ class Network:
                 # input dropout, used only when character embedding is not used
                 self.i_dropout = tf.placeholder_with_default(1.0, [], name='i_dropout')
                 self.i_dropout_protect = tf.placeholder_with_default(0.0, [], name='i_dropout_protect')
+                self.o_dropout_coef = tf.placeholder_with_default(1.0, [], name='o_dropout_coef')
 
                 if num_chars is None: # word embedding
                     preselection = self.add_placeholder(tf.int32, [None], 'preselection') # [words]
@@ -159,7 +160,8 @@ class Network:
                 layers_out = tf.concat([layers_out, pooled], 1)
 
             with tf.name_scope("output"):
-                hidden = tf_layers.fully_connected(layers_out, num_outputs=hidden_size, activation_fn = tf.nn.relu)
+                dropped_out = tf.nn.dropout(layers_out, self.o_dropout_coef)
+                hidden = tf_layers.fully_connected(dropped_out, num_outputs=hidden_size, activation_fn = tf.nn.relu)
                 if self.step_as_tree: self.logits = tf_layers.linear(hidden, num_outputs = 2)
                 else: self.logits = tf.concat([tf.expand_dims(linear_gather(hidden, steps+1, max_step_index+1), 1),
                                                tf.zeros([conjectures.batch_size, 1], dtype=tf.float32)], 1)
@@ -244,7 +246,7 @@ class Network:
     def train(self, data, dropout=None):
         data = self.feed(data)
         if dropout is not None:
-            data.update({self.i_dropout: dropout[0], self.i_dropout_protect: dropout[1]})
+            data.update({self.i_dropout: dropout[0], self.i_dropout_protect: dropout[1], self.o_dropout_coef: dropout[2]})
         _, accuracy, summary = \
             self.session.run([self.training, self.accuracy, self.summary], data)
         if self.summary_writer:
