@@ -24,22 +24,16 @@ def test_consistency(tests_num):
     #print("simple test DONE".format(line))
 
     index = (0,0)
-    if args.conjectures:
-        [steps, conjectures, preselection, labels], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=tests_num)
-        predictions, logits = network.predict(steps, conjectures, preselection)
-    else:
-        [steps, preselection, labels], index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=tests_num)
-        predictions, logits = network.predict(steps, None, preselection)
+    batch, index = data_parser.draw_batch('val', tests_num, get_conjectures = args.conjectures, begin_index = index)
+    del batch['labels']
+    predictions, logits = network.predict(batch)
 
     isolated_predictions, isolated_logits = [], []
     index = (0,0)
     for i in range(tests_num):
-        if args.conjectures:
-            [step, conjecture, preselection, labels], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=1)
-            prediction, logit = network.predict(step, conjecture, preselection)
-        else:
-            [step, preselection, labels], index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=1)
-            prediction, logit = network.predict(step, None, preselection)
+        batch, index = data_parser.draw_batch('val', 1, get_conjectures = args.conjectures, begin_index = index)
+        del batch['labels']
+        prediction, logit = network.predict(batch)
 
         isolated_predictions.append(prediction[0])
         isolated_logits.append(logit[0])
@@ -100,6 +94,7 @@ cmd_parser.set_defaults(extra_layer=False)
 cmd_parser.add_argument('--step_as_index', dest='step_as_index', action='store_true', help="Ignore the inner structure of a step.")
 cmd_parser.set_defaults(step_as_index=False)
 cmd_parser.add_argument('--word2vec', default=None, nargs=2, type=float, help="Word2vec-like encoding, expects two coeficient for type_loss and const_loss respectively.")
+cmd_parser.add_argument('--definitions', default=None, nargs=2, type=str, help="First argument determines the filename formed by lines 'd <tokens> <tokens in definitions>', second argument is the training coefficitent")
 cmd_parser.add_argument('--known_only', dest='known_only', action='store_true', help="Discard data with unknown tokens.")
 cmd_parser.add_argument('--allow_unknown', dest='known_only', action='store_false')
 cmd_parser.set_defaults(known_only=False)
@@ -111,6 +106,7 @@ cmd_parser.add_argument("--test_batch_size", default=128, type=int, help="Batch 
 cmd_parser.add_argument("--rnn_dim", default=128, type=int, help="Dimension of RNN state.")
 #cmd_parser.add_argument("--appl_hidden", default=128, type=int, help="Size of hidden layer in 'applications'.")
 cmd_parser.add_argument("--hidden", default=256, type=int, help="Size of the final hidden layer.")
+cmd_parser.add_argument("--o_dropout", default=0.5, type=float, help="Input dropout coefficient.")
 cmd_parser.add_argument("--i_dropout", default=0.5, type=float, help="Input dropout coefficient.")
 cmd_parser.add_argument("--i_dropout_protect", default=0.2, type=float, help="Fraction of vocabulary protected before dropout.")
 cmd_parser.add_argument('--log_graph', dest='log_graph', action='store_true', help="Add graph to tensorflow log.")
@@ -118,6 +114,21 @@ cmd_parser.set_defaults(log_graph=False)
 cmd_parser.add_argument('--log_embeddings', dest='log_embeddings', action='store_true', help="Add embeddings to tensorflow log.")
 cmd_parser.set_defaults(log_embeddings=False)
 args = cmd_parser.parse_args()
+
+expname = "{}-{}-epochs-{}-dim-{}-{}-dropout-{}-{}".format(['uncond', 'cond'][args.conjectures], version, args.epochs,
+                                                              args.rnn_dim, args.hidden,
+                                                              args.i_dropout, args.i_dropout_protect)
+if args.pooling: expname += "-pooling"
+if args.char_emb: expname += "-char_emb"
+if args.pooling: expname += "-pooling"
+if args.extra_layer: expname += "-extra_layer"
+if args.step_as_index: expname += "-step_as_index"
+if args.word2vec is not None: expname += "-w2vec-{}-{}".format(args.word2vec[0], args.word2vec[1])
+if args.definitions is not None:
+    def_fname, def_coef = args.definitions
+    def_coef = float(def_coef)
+    expname += "-def-{}".format(def_coef)
+else: def_fname, def_coef = None, None
 
 if args.measure_memory:
     import psutil
@@ -130,27 +141,18 @@ data_parser = DataParser(args.data_path, encoder = encoder, voc_filename = args.
                          discard_unknown = args.known_only, ignore_deps = True, verbose = not args.quiet,
                          simple_format = args.simple_data,
                          divide_test = args.divide_test_data, truncate_test = args.truncate_test_data, truncate_train = args.truncate_train_data,
-                         complete_vocab = args.char_emb, step_as_index = args.step_as_index
+                         complete_vocab = args.char_emb, step_as_index = args.step_as_index, def_fname = def_fname
 )
 
 if args.measure_memory:
     print("Memory after parsing: {}M".format(process.memory_info().rss / 10**6))
 
-expname = "{}-{}-epochs-{}-dim-{}-{}-dropout-{}-{}".format(['uncond', 'cond'][args.conjectures], version, args.epochs,
-                                                              args.rnn_dim, args.hidden,
-                                                              args.i_dropout, args.i_dropout_protect)
-if args.pooling: expname += "-pooling"
-if args.char_emb: expname += "-char_emb"
-if args.pooling: expname += "-pooling"
-if args.extra_layer: expname += "-extra_layer"
-if args.step_as_index: expname += "-step_as_index"
-if args.word2vec is not None: expname += "-w2vec-{}-{}".format(args.word2vec[0], args.word2vec[1])
 network = Network(logdir = args.log_dir, threads = args.threads, expname = expname)
 network.construct(vocab_size = len(data_parser.vocabulary_index), use_conjectures=args.conjectures,
                   dim=args.rnn_dim, hidden_size=args.hidden,
                   extra_layer = args.extra_layer, w2vec = args.word2vec,
                   use_pooling = args.pooling, num_chars = encoder.char_num,
-                  max_step_index = data_parser.max_step_index)
+                  max_step_index = data_parser.max_step_index, definitions_coef = def_coef)
 if args.log_graph: network.log_graph()
 if args.log_embeddings: network.log_vocabulary(data_parser.vocabulary_index)
 
@@ -172,11 +174,8 @@ for epoch in range(1, args.epochs+1):
         if args.measure_time: start_time = time.time()
 
         # Draw training data
-        if args.conjectures:
-            [steps, conjectures, preselection, labels] = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=args.batch_size, split='train')
-        else:
-            [steps, preselection, labels] = data_parser.draw_random_batch_of_steps(batch_size=args.batch_size, split='train')
-            conjectures = None
+        batch = data_parser.draw_batch('train', args.batch_size, get_conjectures = args.conjectures,
+                                       definitions_size = args.batch_size)
         # ... done
 
         if args.measure_time:
@@ -186,7 +185,7 @@ for epoch in range(1, args.epochs+1):
             start_time = time.time()
 
         # Train
-        accuracy = network.train(steps, conjectures, preselection, labels, dropout=(args.i_dropout, args.i_dropout_protect))
+        accuracy = network.train(batch, dropout=(args.i_dropout, args.i_dropout_protect, args.o_dropout))
         # ... done
 
         if args.measure_time:
@@ -216,16 +215,11 @@ for epoch in range(1, args.epochs+1):
         if args.measure_time: start_time = time.time()
 
         # Draw testing data  
-        if args.conjectures:
-            [steps, conjectures, preselection, labels], index =\
-                data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=args.test_batch_size)
-        else:
-            [steps, preselection, labels], index =\
-                data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=args.test_batch_size)
-            conjectures = None
+        batch, index = data_parser.draw_batch('val', args.test_batch_size, get_conjectures = args.conjectures, definitions_size = 0,
+                                              begin_index = index)
         # ... done
 
-        if len(labels) == 0: break # We are on the end of the testing dataset, so nothing left
+        if batch['size'] == 0: break # We are on the end of the testing dataset, so nothing left
 
         if args.measure_time:
             end_time = time.time()
@@ -234,7 +228,7 @@ for epoch in range(1, args.epochs+1):
             start_time = time.time()
 
         # Evaluation of current part
-        accuracy, loss = network.evaluate(steps, conjectures, preselection, labels)
+        accuracy, loss = network.evaluate(batch)
         # ... done
 
         if args.measure_time:
@@ -242,11 +236,11 @@ for epoch in range(1, args.epochs+1):
             testing_time += end_time-start_time
             testing_num += 1
 
-        sum_accuracy += accuracy*len(labels)
-        sum_loss += loss*len(labels)
-        processed_test_samples += len(labels)
+        sum_accuracy += accuracy*batch['size']
+        sum_loss += loss*batch['size']
+        processed_test_samples += batch['size']
 
-        if len(labels) < args.test_batch_size: break # Just a smaller batch left -> we are on the end of the testing dataset
+        if batch['size'] < args.test_batch_size: break # Just a smaller batch left -> we are on the end of the testing dataset
 
         if not args.quiet:
             sys.stdout.write("Epoch {:>4}: Test {:>5}: current acc {:<9} loss {:<15}, avg acc {:<15} loss {:<15}".\

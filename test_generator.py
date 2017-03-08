@@ -24,13 +24,14 @@ if __name__ == "__main__":
     real_structure = ttu.lines_to_tree_structure(lines)
 
     print(ttu.vocabulary)
-    network = Network(20, len(lines), ttu.vocabulary, ttu.reverse_voc, max_steps = 100)
+    network = Network(40, len(lines), ttu.vocabulary, ttu.reverse_voc)
     for i in range(401):
 
         types_loss_acc, const_loss_acc = network.train(real_structure, ttu.preselection.data, np.arange(len(lines)))
         if i%20 == 0:
             print("{}: types {},  const {}".format(i, types_loss_acc, const_loss_acc))
-            predictions = network.predict(range(len(lines)))
-            for ori, pred in zip(lines, predictions):
+            predictions, uncertainities = network.predict(range(len(lines)))
+            for ori, pred, uncert in zip(lines, predictions, uncertainities):
                 print("Original: {}".format(ori.rstrip()))
                 print("Prediction: {}".format(pred))
+                print("Uncertainity: {}".format(uncert))

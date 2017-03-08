@@ -23,3 +23,12 @@ python main.py --data_path mizar-dataset --divide_test_data 0.1  --simple_data
 tensorboard --logdir ./logs/ &
 chromium-browser http://localhost:6006/
 ```
+
+## Optional features
+
+- Input dropping
+- Word embedding
+- Multi layer Tree-RNN in both directions: from nodes to root and from root to nodes
+- Word guessing like word2vec for better word embeddings
+- Generation of formulas based on the tree structure
+- Learning of word embeddings by their definitions
