@@ -37,7 +37,7 @@ Feel free to acomplish these tasks (and let me know :-) ).
 - [ ] Try Mizar dataset with smaller dimension (64)
 - [ ] Ability to log embeddings in char_emb mode
 - [ ] More flexibility with tree-RNN inputs (not neccesarily the same dim), split interface and dimension
-- [ ] Classic dropout (inside network, tf.nn.dropout)
+- [x] Classic dropout (inside network, tf.nn.dropout)
 - [ ] Dependency selection (the 'D' lines) -- big output (negative sampling / hierarchical softmax)
 - [ ] Finish procedural (out of network) version of generation
   - [ ] Search for optimal result
