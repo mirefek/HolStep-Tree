@@ -20,9 +20,9 @@ class TreePlaceholder:
     def feed(self, tree_structure):
         return dict(
             [(self.roots, tree_structure.roots)] +
-            zip(self.layer_lens, tree_structure.layer_lens) +
-            zip(self.node_inputs, tree_structure.node_inputs) +
-            zip(self.node_sample, tree_structure.node_sample)
+            list(zip(self.layer_lens, tree_structure.layer_lens)) +
+            list(zip(self.node_inputs, tree_structure.node_inputs)) +
+            list(zip(self.node_sample, tree_structure.node_sample))
         )
 
 # interface for up_flow and down_flow
