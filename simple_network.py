@@ -77,7 +77,14 @@ class Network:
         return predictions
 
 encoder = tree.TokenEncoder(('*', '/'))
-data_parser = DataParser("./e-hol-ml-dataset/", encoder = encoder, ignore_deps = True, truncate_test = 0.05, truncate_train = 0.01)
+data_parser = DataParser(
+    "./e-hol-ml-dataset/",
+    encoder = encoder,
+    ignore_deps = True,
+    truncate_test = 0.05,
+    truncate_train = 0.01,
+    complete_vocab = True,
+)
 network = Network(len(data_parser.vocabulary_index))
 
 # training
@@ -114,14 +121,15 @@ while True:
         get_conjectures = False,
         begin_index = index, # this causes the "in order" mode
     )
-    if len(labels) == 0: break
+    numlabels = len(batch['labels'])
+    if numlabels == 0: break
 
-    accuracy, loss = network.evaluate(batch.steps, batch.labels)
+    accuracy, loss = network.evaluate(batch['steps'], batch['labels'])
 
-    sum_accuracy += accuracy*len(labels)
-    sum_loss += loss*len(labels)
-    processed_test_samples += len(labels)
+    sum_accuracy += accuracy*numlabels
+    sum_loss += loss*numlabels
+    processed_test_samples += numlabels
 
-    if len(labels) < batch_size: break # Just a smaller batch left -> we are on the end of the testing dataset
+    if numlabels < batch_size: break # Just a smaller batch left -> we are on the end of the testing dataset
 
 print("Development accuracy: {}, avg. loss: {}".format(sum_accuracy/processed_test_samples, sum_loss/processed_test_samples))
