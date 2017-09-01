@@ -87,10 +87,14 @@ batch_size = 64
 acumulated = 0.5
 for i in range(1000):
 
-    [steps, labels] = data_parser.draw_random_batch_of_steps(batch_size=batch_size, split='train', use_preselection = False)
-    #[steps, conjectures, labels] = data_parser.draw_random_batch_of_steps_and_conjectures(batch_size=64, split='train', use_preselection = False)
+    batch = data_parser.draw_batch(
+        split='train',
+        batch_size=batch_size,
+        use_preselection = False,
+        get_conjectures = False,
+    )
 
-    acc = network.train(steps, labels)
+    acc = network.train(batch['steps'], batch['labels'])
     acumulated = acumulated*0.99 + acc*0.01
 
     if (i+1)%100 == 0: print("{}: {}".format(i+1, acumulated))
@@ -103,11 +107,16 @@ processed_test_samples = 0
 
 batch_size = 128
 while True:
-    [steps, labels], index = data_parser.draw_batch_of_steps_in_order(index, split='val', batch_size=batch_size, use_preselection = False)
-    #[steps, conjectures, labels], index = data_parser.draw_batch_of_steps_and_conjectures_in_order(index, split='val', batch_size=128, use_preselection = False)
+    batch, index = data_parser.draw_batch(
+        split='val',
+        batch_size=batch_size,
+        use_preselection = False,
+        get_conjectures = False,
+        begin_index = index, # this causes the "in order" mode
+    )
     if len(labels) == 0: break
 
-    accuracy, loss = network.evaluate(steps, labels)
+    accuracy, loss = network.evaluate(batch.steps, batch.labels)
 
     sum_accuracy += accuracy*len(labels)
     sum_loss += loss*len(labels)
