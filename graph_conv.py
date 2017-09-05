@@ -1,3 +1,4 @@
+import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as tf_layers
 
@@ -12,6 +13,29 @@ class GraphConvPlaceHolder:
     def feed(self, conv_data):
         gather_indices, segments = conv_data
         return {self.gather_indices: gather_indices, self.segments: segments}
+
+class GraphConv2PlaceHolder:
+
+    def __init__(self, edge_arities, name = "graph_conv2_data"):
+
+        with tf.name_scope(name):
+            self.gather_scatter_indices = []
+            for edge_index, edge_arity in enumerate(edge_arities):
+                for node in range(edge_arity):
+                    self.gather_scatter_indices.append((
+                        tf.placeholder(tf.int32, [None, edge_arity-1],
+                                       name = "gather_indices_{}_{}".format(edge_index, node)),
+                        tf.placeholder(tf.int32, [None],
+                                       name = "scatter_indices_{}_{}".format(edge_index, node)),
+                    ))
+
+    def feed(self, conv_data):
+        result = dict()
+        for ph, data in zip(self.gather_scatter_indices, conv_data):
+            result[ph[0]] = data[0] # gather
+            result[ph[1]] = data[1] # scatter
+
+        return result
 
 class GraphPoolPlaceHolder:
 
@@ -28,15 +52,16 @@ class GraphPoolPlaceHolder:
 
 class GraphPlaceHolder:
 
-    def __init__(self, layer_num, name = "graph_structure"):
+    def __init__(self, layer_num, edge_arities, ver2 = False, name = "graph_structure"):
 
         with tf.name_scope("graph_structure"):
 
+            self.ver2 = ver2
             self.nodes = tf.placeholder(tf.int32, [None], name = "nodes")
-            self.conv_data = [
-                GraphConvPlaceHolder("conv_data{}".format(i+1))
-                for i in range(layer_num)
-            ]
+            self.conv_data = []
+            for i in range(layer_num):
+                if ver2: self.conv_data.append(GraphConv2PlaceHolder(edge_arities, "conv_data{}".format(i+1)))
+                else: self.conv_data.append(GraphConvPlaceHolder("conv_data{}".format(i+1)))
             self.pool_data = [
                 GraphPoolPlaceHolder("pool_data{}".format(i+1))
                 for i in range(layer_num)
@@ -79,6 +104,7 @@ class GraphConvLayer:
 
     def __call__(self, structure, data): # data: [total_nodes, dim]
         if isinstance(structure, GraphPlaceHolder):
+            assert(structure.ver2 == False)
             structure = structure.get_conv_data()
 
         input_dim = int(data.shape[-1])
@@ -88,6 +114,33 @@ class GraphConvLayer:
         result = tf_layers.fully_connected(arranged, self.output_dim,
                                            activation_fn = self.activation_fn)
         return result
+
+class GraphConv2Layer:
+    def __init__(self, output_dim, edge_arities,
+                 activation_fn = tf.nn.relu):
+        self.output_dim = output_dim
+        self.edge_arities = edge_arities
+        self.activation_fn = activation_fn
+        self.index_to_subarity = np.concatenate([[arity]*arity for arity in edge_arities])-1
+
+    def __call__(self, structure, data): # data: [total_nodes, dim]
+        if isinstance(structure, GraphPlaceHolder):
+            assert(structure.ver2 == True)
+            structure = structure.get_conv_data()
+
+        input_dim = int(data.shape[-1])
+        next_data = tf_layers.linear(data, num_outputs = self.output_dim)
+        shape = tf.shape(next_data)
+        for (gather_indices, scatter_indices), subarity \
+            in zip(structure.gather_scatter_indices, self.index_to_subarity):
+            gathered = tf.gather(data, gather_indices)
+            flattened = tf.reshape(gathered, [-1, subarity*input_dim])
+            transformed = tf_layers.linear(flattened, num_outputs = self.output_dim)
+            #next_data = tf.scatter_nd_add(next_data, scatter_indices, transformed)
+            scatter_indices = tf.expand_dims(scatter_indices, axis = -1)
+            next_data = next_data + tf.scatter_nd(scatter_indices, transformed, shape)
+
+        return self.activation_fn(next_data)
 
 class GraphPoolLayer:
     def __init__(self, reduction = tf.segment_max):
@@ -118,7 +171,12 @@ class GraphInitLayer:
 
 class ConvNetwork:
     # layer_signature = ( (2, 64), (2, 128), (2, 256) ): (l,d) a = number of layers, b = dimension between poolings
-    def __init__(self, vocab_size, layer_signature, input_mul):
+    def __init__(self, vocab_size, layer_signature, edge_arities, ver2 = False):
+
+        self.ver2 = ver2
+
+        self.edge_arities = np.array(edge_arities)
+        input_mul = np.sum(self.edge_arities * (self.edge_arities-1)) + 1
 
         self.placeholder = None
         self.layer_signature = layer_signature
@@ -127,8 +185,14 @@ class ConvNetwork:
         ]
         for i, (layer_num, dim) in enumerate(layer_signature):
             for j in range(layer_num):
-                self.layers.append(tf.make_template("layer_{}_{}_conv".format(i, j+1),
-                                                    GraphConvLayer(dim, input_mul)))
+                if ver2:
+                    layer = GraphConv2Layer(dim, edge_arities)
+                else:
+                    layer = GraphConvLayer(dim, input_mul)
+                name = "layer_{}_{}_conv".format(i, j+1)
+
+                self.layers.append(tf.make_template(name, layer))
+
             self.layers.append(tf.make_template("layer_{}_pool".format(i+1),
                                                 GraphPoolLayer()))
 
@@ -138,13 +202,16 @@ class ConvNetwork:
         if self.placeholder is not None:
             raise Exception("ConvNetwork can be called just once")
 
-        self.placeholder = GraphPlaceHolder(layer_num = len(self.layer_signature))
+        self.placeholder = GraphPlaceHolder(layer_num = len(self.layer_signature),
+                                            edge_arities = self.edge_arities,
+                                            ver2 = self.ver2)
 
         for layer in self.layers:
             if data is None: data = layer(self.placeholder)
             else: data = layer(self.placeholder, data)
 
-        return data[1:]
+        if self.ver2: return data
+        else: return data[1:]
 
     def feed(self, graph_list):
 

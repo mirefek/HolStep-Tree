@@ -43,6 +43,12 @@ Feel free to acomplish these tasks (and let me know :-) ).
   - [ ] Search for optimal result
   - [ ] Ability to restrict generation to known formulas
 
+## Convolutional network on graph
+
+- [ ] Rewrite the data encoder to C++. Most of the run time is spend in data encoding.
+- [ ] Smarter, yet still fast graph partition.
+- [ ] Store vectors into edges, so that during pooling, the edge keeps remembering where it was.
+
 ## Ideas
 
 - How on Earth can we use conjectures effectively?? Use of conjectures does not seem to influence

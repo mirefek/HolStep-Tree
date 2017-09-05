@@ -1,6 +1,5 @@
 import numpy as np
 from hyper_graph import HyperGraph
-import pymetis
 
 class FormulaReader:
 
@@ -11,10 +10,11 @@ class FormulaReader:
     UNKNOWN_CONST = 4
     FIRST_CONST   = 5
 
-    def __init__(self):
+    def __init__(self, ver2 = False):
 
-        self.graph_arities = (3,3)
-        self.input_mul = sum(x*(x-1) for x in self.graph_arities)+1
+        self.edge_arities = (3,3)
+        self.input_mul = sum(x*(x-1) for x in self.edge_arities)+1
+        self.ver2 = ver2
     
     def set_vocab(self, reverse_vocabulary_index, vocabulary_index):
 
@@ -34,7 +34,7 @@ class FormulaReader:
         if preselection is not None:
             raise Exception("preselection is not supported for GraphLists yet")
 
-        graph_list = GraphList(self.graph_arities)
+        graph_list = GraphList(self.edge_arities, ver2 = self.ver2)
 
         for formula in formula_list:
             self.index = 0
@@ -85,9 +85,10 @@ class FormulaReader:
 
 class GraphList:
 
-    def __init__(self, edge_arities):
+    def __init__(self, edge_arities, ver2 = False):
         self.graphs = []
         self.edge_arities = edge_arities
+        self.ver2 = ver2
 
         arities_cumsum = np.cumsum(self.edge_arities)
         arities_cumsum = np.concatenate(([0], arities_cumsum))
@@ -109,13 +110,17 @@ class GraphList:
         self.graphs.append(graph)
 
     def get_nodes(self):
-        nodes_list = [np.array([0])] + [
+        if self.ver2: nodes_list = []
+        else: nodes_list = [np.array([0])]
+        nodes_list += [
             np.array(graph.nodes)
             for graph in self.graphs
         ]
         return np.concatenate(nodes_list)
 
     def get_conv_data(self):
+
+        if self.ver2: return self.get_conv2_data()
 
         indices_list = [np.zeros(self.input_mul, dtype = int)]
         partition_list = [np.arange(self.input_mul)]
@@ -173,19 +178,65 @@ class GraphList:
 
         return gather_indices, segments
 
-    def get_pool_data(self, remaining_layers):
-
-        partitions = [np.array([0])]
-        factor_graphs = []
-        clusters_processed = 1
+    def get_conv2_data(self): # TODO: use_zero: True or False
+        nodes_num = 0
+        result = [
+            ([], []) for _ in range(self.edges_total)
+        ]
 
         for graph in self.graphs:
+            for edge_type, edge_nodes in graph.edges:
+                for i,node in enumerate(edge_nodes):
+                    edge_index = self.edge_indices[edge_type] + i
+                    neighbors = np.array(edge_nodes[:i]+edge_nodes[i+1:])
+
+                    #result[edge_index].append(
+                    #    (neighbors + nodes_num, node + nodes_num)
+                    #)
+                    result[edge_index][0].append(neighbors + nodes_num)
+                    result[edge_index][1].append(node + nodes_num)
+
+            nodes_num += graph.nodes_num()
+
+        result_np = []
+        for data, subarity in zip(result, self.index_to_subarity):
+            if len(data[0]) == 0:
+                result_np.append((
+                    np.zeros([0, subarity]),
+                    np.zeros([0]),
+                ))
+            else:
+                result_np.append((
+                    np.stack(data[0]),
+                    np.stack(data[1]),
+                ))
+                #print(np.max(result_np[-1][0]), np.max(result_np[-1][1]))
+
+        return result_np
+
+    def get_pool_data(self, remaining_layers):
+
+        if self.ver2:
+            partitions = []
+            clusters_processed = 0
+        else:
+            partitions = [np.array([0])]
+            clusters_processed = 1
+            
+        factor_graphs = []
+
+        for graph in self.graphs:
+            #import pymetis
+            import simple_partition
+
             num_clusters \
                 = int(np.ceil(graph.nodes_num()
                               ** (remaining_layers/float(remaining_layers+1))))
 
-            cut_size, partition \
-                = pymetis.part_graph(num_clusters, adjacency=graph.to_simple_graph())
+            #cut_size, partition \
+            #    = pymetis.part_graph(num_clusters, adjacency=graph.to_simple_graph())
+            partition \
+                = simple_partition.part_graph(num_clusters, adjacency=graph.to_simple_graph())
 
             # rearrangement of the partition and discarding empty parts
             used_num = 0

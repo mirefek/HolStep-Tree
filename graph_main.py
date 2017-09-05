@@ -4,7 +4,7 @@ import os
 import sys
 import traceback_utils
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-sys.excepthook = traceback_utils.shadow('/home/mirek/.local/')
+#sys.excepthook = traceback_utils.shadow('/home/mirek/.local/')
 
 import numpy as np
 import tensorflow as tf
@@ -18,19 +18,26 @@ from tf_utils import predict_loss_acc
 
 class Network:
 
-    def __init__(self, vocab_size, index_mul,
+    def __init__(self, vocab_size, edge_arities,
                  step_signature = ((2,64), (2,128), (2,256)),
-                 conj_signature = ((3,128), (3,192))):
+                 conj_signature = ((3,128), (3,192)),
+                 ver2 = False):
 
-        self.step_network = ConvNetwork(vocab_size, step_signature, index_mul)
-        self.conj_network = ConvNetwork(vocab_size, conj_signature, index_mul)
+        self.step_network = ConvNetwork(vocab_size, step_signature,
+                                        edge_arities, ver2 = ver2)
+        self.conj_network = ConvNetwork(vocab_size, conj_signature,
+                                        edge_arities, ver2 = ver2)
 
     def construct(self, threads = 4):
 
         graph = tf.Graph()
         graph.seed = 42
-        self.session = tf.Session(graph = graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
-                                                                       intra_op_parallelism_threads=threads))
+        config = tf.ConfigProto(
+            inter_op_parallelism_threads=threads,
+            intra_op_parallelism_threads=threads,
+            #device_count = {'GPU': 0},
+        )
+        self.session = tf.Session(graph = graph, config = config)
         with self.session.graph.as_default():
 
             with tf.name_scope("Step"):
@@ -60,9 +67,11 @@ class Network:
         return data
 
     def train(self, steps, conjectures, labels):
+        data = self.feed(steps, conjectures, labels)
+        print("Train")
         _, accuracy, loss = self.session.run(
             [self.training, self.accuracy, self.loss],
-            self.feed(steps, conjectures, labels)
+            data,
         )
 
         return accuracy, loss
@@ -79,14 +88,15 @@ class Network:
             self.feed(steps, conjectures, labels)
         )
 
-encoder = FormulaReader()
+encoder = FormulaReader(ver2 = True)
 data_parser = DataParser("./e-hol-ml-dataset/", encoder = encoder,
                          ignore_deps = True, truncate_test = 0.05, truncate_train = 0.01)
 
 network = Network(
-    encoder.vocab_size, encoder.input_mul,
+    encoder.vocab_size, encoder.edge_arities,
     #step_signature = ((2,32), (2,64), (2,128)),
     #conj_signature = ((2,64), (2,128)),
+    ver2 = encoder.ver2,
 )
 network.construct()
 
@@ -94,20 +104,20 @@ network.construct()
 
 batch_size = 64
 
-#index = (84, 352)
+#index = (0,0)
 acumulated = 0.5
 for i in range(1000):
 
-    #print("Prepare data")
+    print("Prepare data")
     batch = data_parser.draw_batch(
         batch_size=batch_size,
         split='train',
         get_conjectures = True,
         use_preselection = False,
+        #begin_index = index
     )
     numlabels = len(batch['labels'])
 
-    #print("Train")
     acc, loss = network.train(
         batch['steps'],
         batch['conjectures'],

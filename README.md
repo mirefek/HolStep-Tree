@@ -24,6 +24,13 @@ tensorboard --logdir ./logs/ &
 chromium-browser http://localhost:6006/
 ```
 
+## Other executable files
+
+There are two more files which, when executed, does a simillar job as main.py.
+
+- [simplenetwork.py] Is a simplified version of main.py, so it can be better understood. However it does not offer so many features.
+- [graph_main.py] Is an experimental alternative approach using convolutional network on graph. However, it is much slower and less effective than the default tree-RNN at this point.
+
 ## Optional features
 
 - Input dropping
